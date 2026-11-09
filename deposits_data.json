@@ -1,0 +1,58 @@
+[
+  {
+    "id": "dep-1794251789487",
+    "depositId": "DEP-829483",
+    "userId": "usr-admin-1",
+    "userEmail": "bobysagar761855@gmail.com",
+    "amount": 2000,
+    "bonus": 60,
+    "totalCredited": 2060,
+    "method": "paytm_qr",
+    "methodTitle": "Paytm UPI QR (bobeegautam1@ptaxis)",
+    "utrNumber": "412389104829",
+    "status": "Completed",
+    "createdAt": "2026-11-09T19:16:29.487Z"
+  },
+  {
+    "id": "dep-101",
+    "depositId": "DEP-981240",
+    "userId": "usr-admin-1",
+    "userEmail": "bobysagar761855@gmail.com",
+    "amount": 2000,
+    "bonus": 60,
+    "totalCredited": 2060,
+    "method": "paytm_qr",
+    "methodTitle": "Paytm UPI QR (bobeegautam1@ptaxis)",
+    "utrNumber": "412389104821",
+    "status": "Completed",
+    "createdAt": "2026-11-09T16:16:21.569Z"
+  },
+  {
+    "id": "dep-102",
+    "depositId": "DEP-981180",
+    "userId": "usr-reseller-2",
+    "userEmail": "rohit@smmreseller.in",
+    "amount": 1400,
+    "bonus": 42,
+    "totalCredited": 1442,
+    "method": "phonepe",
+    "methodTitle": "PhonePe UPI",
+    "utrNumber": "409182746194",
+    "status": "Completed",
+    "createdAt": "2026-11-08T23:16:21.569Z"
+  },
+  {
+    "id": "dep-103",
+    "depositId": "DEP-980992",
+    "userId": "usr-client-3",
+    "userEmail": "demo@client.com",
+    "amount": 500,
+    "bonus": 0,
+    "totalCredited": 500,
+    "method": "gpay",
+    "methodTitle": "Google Pay UPI",
+    "utrNumber": "408291048291",
+    "status": "Completed",
+    "createdAt": "2026-11-07T19:16:21.569Z"
+  }
+]

@@ -1,0 +1,71 @@
+[
+  {
+    "id": "usr-admin-1",
+    "username": "bobysagar",
+    "name": "Boby Sagar",
+    "email": "bobysagar761855@gmail.com",
+    "role": "admin",
+    "balance": 4560,
+    "apiKey": "hn_live_admin_89a3f2d1e4",
+    "token": "hn_sess_c73d1d04b8c7a17a0c83db0822542a6449b9c49166bd0d82",
+    "phone": "+91 98765 43210",
+    "createdAt": "2026-11-09T17:59:43.625Z",
+    "salt": "157146b3c1bf88331b599accd27a9f96",
+    "passwordHash": "923b051348afc30e42f5ef6938ee6496212974fc8239d42fa0107fa4a5d16edd7a61c8f61d1b35c0221dcd56b4d332fad46afd42ea174210bfbd095accae231c"
+  },
+  {
+    "id": "usr-reseller-2",
+    "username": "rohitverma",
+    "name": "Rohit Verma",
+    "email": "rohit@smmreseller.in",
+    "role": "reseller",
+    "balance": 1450,
+    "apiKey": "hn_live_reseller_9901bd4e",
+    "token": "hn_sess_reseller_seed",
+    "phone": "+91 98111 22334",
+    "createdAt": "2026-11-09T17:59:43.625Z",
+    "salt": "dc15c8ba4ac5f0fd4f45e51dab08ac20",
+    "passwordHash": "d45263fb5c355381861578c7c35c09a5ca5300b4065fc763365711a4af305c14156acf98804060326fe75e874bf887a89fdf857ead337a2456be51a372bee387"
+  },
+  {
+    "id": "usr-client-3",
+    "username": "democlient",
+    "name": "Demo Client",
+    "email": "demo@client.com",
+    "role": "client",
+    "balance": 650,
+    "apiKey": "hn_client_33f81e2b",
+    "token": "hn_sess_f9a8fe0786ffa61ee72f20a70a7176748d516b8fc2ad3d22",
+    "phone": "+91 99988 77665",
+    "createdAt": "2026-11-09T17:59:43.625Z",
+    "salt": "e4a26cf5643658eeeca3580789141910",
+    "passwordHash": "c5109c498d7397fed67e6b62a2de3ffe2c20a0352b57516a5a322cfa3aa13b6024126291deeda6c1d1cd849bfd6aeaa1deccffa24dcd6fd9ccbb3d24d411d50c"
+  },
+  {
+    "id": "usr-1794247189658",
+    "username": "amansingh",
+    "name": "Aman Singh",
+    "email": "aman@growthpanel.in",
+    "role": "client",
+    "balance": 500,
+    "apiKey": "hn_user_w4n2qdpj",
+    "token": "hn_sess_aman_seed",
+    "phone": "+919988776655",
+    "createdAt": "2026-11-09T17:59:49.658Z",
+    "salt": "c3780ff0ad6ddeb2d04ceeae8e229764",
+    "passwordHash": "b33bdac38569113f3499057d79e015cdbd078ab0d747eedcc9f5e01c73eb344ab20790de106498f91b51ffa0205d7c3b8f089b2c7c25e867ccfd6063a447aa2b"
+  },
+  {
+    "id": "usr-1794247540088",
+    "username": "neeraj_smm",
+    "name": "neeraj_smm",
+    "email": "neeraj@resellernetwork.in",
+    "passwordHash": "25f0e13b98c1cf931a1c518e5afc20a5c24a631762c14f8080cab094545210073d0d4c0ab00ade8bedd8d6bd04843eff81c402f86e2e9319826b52da9a128754",
+    "salt": "422969654e4924e282459015085f4c70",
+    "role": "client",
+    "balance": 500,
+    "apiKey": "hn_user_4954f16cea13e6e1",
+    "token": "hn_sess_2c5b2de7993a7e7efc6a8a8f19686fccfbd91364fa6b4a20",
+    "createdAt": "2026-11-09T18:05:40.088Z"
+  }
+]
