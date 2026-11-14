@@ -4,24 +4,28 @@ import { NewOrderForm } from './components/NewOrderForm.tsx';
 import { ServicesTable } from './components/ServicesTable.tsx';
 import { OrdersTracker } from './components/OrdersTracker.tsx';
 import { WalletView } from './components/WalletView.tsx';
+import { ReferralView } from './components/ReferralView.tsx';
 import { ApiSettingsView } from './components/ApiSettingsView.tsx';
 import { FAQView } from './components/FAQView.tsx';
 import { AuthModal } from './components/AuthModal.tsx';
 import { ToastContainer } from './components/Toast.tsx';
 import { initialServices, SMMService } from './data/services.ts';
 import { PlacedOrder, ToastMessage, User } from './types.ts';
+import { initGoogleAuth, googleLogout } from './lib/firebaseAuth.ts';
+import { parseUrlState, getTabBaseUrl, updateBrowserUrl } from './lib/searchUrl.ts';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<PanelTab>('new-order');
+  const [activeTab, setActiveTab] = useState<PanelTab>(() => parseUrlState().tab);
   const [services, setServices] = useState<SMMService[]>(initialServices);
   const [orders, setOrders] = useState<PlacedOrder[]>([]);
   const [providerBalance, setProviderBalance] = useState<string>('Loading...');
   const [providerStatus, setProviderStatus] = useState<'online' | 'offline_cached' | 'auth_error' | 'loading'>('loading');
   
-  // User Authentication State
+  // User Authentication State (no hardcoded shared user; restored strictly from verified session token)
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
+    const token = localStorage.getItem('hanuman_auth_token');
     const saved = localStorage.getItem('hanuman_user');
-    if (saved) {
+    if (token && saved) {
       try {
         const parsed = JSON.parse(saved);
         if (!parsed.username && parsed.email) {
@@ -29,22 +33,10 @@ export default function App() {
         }
         return parsed;
       } catch {
-        // fallback
+        // invalid saved state
       }
     }
-    // Default pre-authenticated admin user
-    return {
-      id: 'usr-admin-1',
-      username: 'bobysagar',
-      name: 'Boby Sagar',
-      email: 'bobysagar761855@gmail.com',
-      role: 'admin',
-      balance: 2500.00,
-      apiKey: 'hn_live_admin_89a3f2d1e4',
-      token: 'hn_sess_admin_seed',
-      phone: '+91 98765 43210',
-      createdAt: new Date().toISOString()
-    };
+    return null;
   });
 
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
@@ -76,22 +68,138 @@ export default function App() {
     setIsAuthModalOpen(true);
   };
 
-  // Sync session with backend on load
+  // Sync activeTab when user navigates with browser Back / Forward
+  useEffect(() => {
+    const handlePopState = () => {
+      const parsed = parseUrlState();
+      setActiveTab(parsed.tab);
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  const handleTabChange = useCallback((tab: PanelTab) => {
+    setActiveTab(tab);
+    updateBrowserUrl(getTabBaseUrl(tab), true);
+  }, []);
+
+  // Capture ?ref=CODE from invite links
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const ref = params.get('ref');
+    if (ref && ref.trim()) {
+      localStorage.setItem('pending_referral_code', ref.trim().toUpperCase());
+    }
+  }, []);
+
+  // Sync Firebase Google Auth + backend session on load
   useEffect(() => {
     const token = localStorage.getItem('hanuman_auth_token');
     if (token) {
-      fetch(`/api/auth/me?token=${token}`)
-        .then(res => res.json())
-        .then(data => {
-          if (data.success && data.user) {
-            setCurrentUser(data.user);
+      fetch('/api/auth/me', {
+        cache: 'no-store',
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      })
+        .then(async (res) => {
+          const data = await res.json();
+          if (res.ok && data.success && data.user) {
+            setCurrentUser({ ...data.user, token });
             setUserBalance(data.user.balance);
+          } else {
+            localStorage.removeItem('hanuman_user');
+            localStorage.removeItem('hanuman_auth_token');
+            setCurrentUser(null);
+            setUserBalance(0);
+            setOrders([]);
           }
         })
         .catch(() => {
           // Token verification offline
         });
     }
+
+    const unsubscribe = initGoogleAuth(
+      async (_firebaseUser, idToken) => {
+        try {
+          const res = await fetch('/api/auth/google', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${idToken}`
+            },
+            body: JSON.stringify({ idToken })
+          });
+          const data = await res.json();
+          if (res.ok && data.success && data.user) {
+            setCurrentUser({
+              ...data.user,
+              photoUrl: data.user.photoUrl || _firebaseUser.photoURL || undefined,
+              token: data.token
+            });
+            setUserBalance(data.user.balance);
+          }
+        } catch {
+          // offline
+        }
+      },
+      () => {
+        if (!localStorage.getItem('hanuman_auth_token')) {
+          setCurrentUser(null);
+          setUserBalance(0);
+          setOrders([]);
+        }
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
+
+  // Prevent browser Back-button (bfcache) from restoring a logged-out dashboard
+  useEffect(() => {
+    const handlePageShow = (event: PageTransitionEvent) => {
+      const token = localStorage.getItem('hanuman_auth_token');
+      if (!token) {
+        setCurrentUser(null);
+        setUserBalance(0);
+        setOrders([]);
+        if (event.persisted) {
+          setAuthModalMode('login');
+          setIsAuthModalOpen(true);
+        }
+        return;
+      }
+
+      if (event.persisted) {
+        fetch('/api/auth/me', {
+          cache: 'no-store',
+          headers: { Authorization: `Bearer ${token}` }
+        })
+          .then(res => res.json())
+          .then(data => {
+            if (!data.success || !data.user) {
+              localStorage.removeItem('hanuman_user');
+              localStorage.removeItem('hanuman_auth_token');
+              setCurrentUser(null);
+              setUserBalance(0);
+              setOrders([]);
+              setAuthModalMode('login');
+              setIsAuthModalOpen(true);
+            }
+          })
+          .catch(() => {
+            setCurrentUser(null);
+            setUserBalance(0);
+            setOrders([]);
+            setAuthModalMode('login');
+            setIsAuthModalOpen(true);
+          });
+      }
+    };
+
+    window.addEventListener('pageshow', handlePageShow);
+    return () => window.removeEventListener('pageshow', handlePageShow);
   }, []);
 
   // Sync user balance with currentUser and local storage
@@ -105,12 +213,9 @@ export default function App() {
     } else {
       localStorage.removeItem('hanuman_user');
       localStorage.removeItem('hanuman_auth_token');
+      setUserBalance(0);
     }
   }, [currentUser]);
-
-  useEffect(() => {
-    localStorage.setItem('reseller_wallet_balance', userBalance.toString());
-  }, [userBalance]);
 
   // Fetch HanumanSMM provider balance
   const fetchProviderBalance = useCallback(async () => {
@@ -133,14 +238,24 @@ export default function App() {
     }
   }, []);
 
-  // Fetch placed orders (user-filtered if client, all if admin)
+  // Fetch placed orders strictly for the authenticated user
   const fetchOrders = useCallback(async () => {
+    const token = currentUser?.token || localStorage.getItem('hanuman_auth_token');
+    if (!currentUser || !token) {
+      setOrders([]);
+      return;
+    }
     try {
-      const url = currentUser ? `/api/orders?userId=${currentUser.id}` : '/api/orders';
-      const res = await fetch(url);
+      const res = await fetch('/api/orders', {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
       const data = await res.json();
-      if (data.orders) {
+      if (res.ok && data.orders) {
         setOrders(data.orders);
+      } else {
+        setOrders([]);
       }
     } catch (err) {
       console.warn('Orders fetch error:', err);
@@ -170,14 +285,16 @@ export default function App() {
     setOrders(prev => [newOrder, ...prev]);
     fetchOrders();
     fetchProviderBalance();
-    setActiveTab('orders');
+    handleTabChange('orders');
   };
 
-  const handleDeductBalance = (amount: number) => {
-    setUserBalance(prev => Math.max(0, prev - amount));
-    if (currentUser) {
-      setCurrentUser(prev => prev ? { ...prev, balance: Math.max(0, prev.balance - amount) } : null);
-    }
+  const handleDeductBalance = (amount: number, exactNewBalance?: number) => {
+    if (!currentUser) return;
+    const nextBalance = typeof exactNewBalance === 'number'
+      ? exactNewBalance
+      : Math.max(0, currentUser.balance - amount);
+    setUserBalance(nextBalance);
+    setCurrentUser(prev => prev ? { ...prev, balance: nextBalance } : null);
   };
 
   const handleAddFunds = (amount: number, _method?: string, exactNewBalance?: number) => {
@@ -194,7 +311,7 @@ export default function App() {
 
   const handleSelectServiceFromCatalog = (serviceId: number) => {
     setPreselectedServiceId(serviceId);
-    setActiveTab('new-order');
+    handleTabChange('new-order');
     showToast('info', 'Service Selected', `Service #${serviceId} loaded into New Order.`);
   };
 
@@ -219,15 +336,44 @@ export default function App() {
   const handleLoginSuccess = (user: User) => {
     setCurrentUser(user);
     setUserBalance(user.balance);
+    setOrders([]);
     fetchOrders();
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    const token = currentUser?.token || localStorage.getItem('hanuman_auth_token');
+
+    // Immediately clear client state & browser storage so no stale state survives
     setCurrentUser(null);
     setUserBalance(0);
+    setOrders([]);
     localStorage.removeItem('hanuman_user');
     localStorage.removeItem('hanuman_auth_token');
-    showToast('info', 'Logged Out', 'You have been logged out of your account.');
+    localStorage.removeItem('reseller_wallet_balance');
+    sessionStorage.clear();
+
+    try {
+      await googleLogout();
+    } catch {
+      // ignore firebase signout error
+    }
+
+    try {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        cache: 'no-store',
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+    } catch {
+      // ignore network error on logout
+    }
+
+    // Replace history entry & open Login modal immediately
+    window.history.replaceState(null, '', '/');
+    setActiveTab('new-order');
+    setAuthModalMode('login');
+    setIsAuthModalOpen(true);
+    showToast('info', 'Logged Out', 'Session destroyed. Please Sign in with Google to continue.');
   };
 
   return (
@@ -236,14 +382,14 @@ export default function App() {
       {/* Top Bar Header */}
       <Header
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        setActiveTab={handleTabChange}
         providerBalance={providerBalance}
         providerStatus={providerStatus}
         userBalance={userBalance}
         currentUser={currentUser}
         onRefreshBalance={fetchProviderBalance}
-        onOpenAddFunds={() => setActiveTab('wallet')}
-        onOpenSettings={() => setActiveTab('api')}
+        onOpenAddFunds={() => handleTabChange('wallet')}
+        onOpenSettings={() => handleTabChange('api')}
         onOpenAuth={handleOpenAuth}
         onLogout={handleLogout}
         isRefreshing={isRefreshing}
@@ -251,54 +397,89 @@ export default function App() {
 
       {/* Main Container */}
       <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-8 py-6 sm:py-10">
-        {activeTab === 'new-order' && (
-          <NewOrderForm
-            services={services}
-            userBalance={userBalance}
-            currentUser={currentUser}
-            onRequireLogin={() => handleOpenAuth('login')}
-            onOrderSuccess={handleOrderSuccess}
-            onDeductBalance={handleDeductBalance}
-            onShowToast={showToast}
-            preselectedServiceId={preselectedServiceId}
-          />
-        )}
+        {!currentUser ? (
+          <div className="max-w-lg mx-auto my-12 bg-[#0f172a]/90 border border-slate-800 rounded-2xl p-8 text-center space-y-5 shadow-2xl">
+            <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-amber-500 to-orange-600 text-white flex items-center justify-center mx-auto shadow-lg shadow-orange-500/20 font-black text-xl">
+              ⚡
+            </div>
+            <div className="space-y-2">
+              <h1 className="text-2xl font-black text-white tracking-tight">
+                Welcome to Boby SMM Panel
+              </h1>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                Sign in or create your account with Google to access the live dashboard, manage your wallet balance, and place orders.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => handleOpenAuth('login')}
+              className="w-full py-3.5 px-6 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white font-bold text-sm rounded-xl shadow-lg shadow-orange-600/25 transition-all cursor-pointer"
+            >
+              Sign In / Create Account with Google
+            </button>
+          </div>
+        ) : (
+          <>
+            {activeTab === 'new-order' && (
+              <NewOrderForm
+                services={services}
+                userBalance={userBalance}
+                currentUser={currentUser}
+                onRequireLogin={() => handleOpenAuth('login')}
+                onOrderSuccess={handleOrderSuccess}
+                onDeductBalance={handleDeductBalance}
+                onShowToast={showToast}
+                preselectedServiceId={preselectedServiceId}
+              />
+            )}
 
-        {activeTab === 'services' && (
-          <ServicesTable
-            services={services}
-            onSelectService={handleSelectServiceFromCatalog}
-          />
-        )}
+            {activeTab === 'services' && (
+              <ServicesTable
+                services={services}
+                onSelectService={handleSelectServiceFromCatalog}
+              />
+            )}
 
-        {activeTab === 'orders' && (
-          <OrdersTracker
-            orders={orders}
-            onRefreshStatus={handleRefreshOrderStatus}
-            onShowToast={showToast}
-          />
-        )}
+            {activeTab === 'orders' && (
+              <OrdersTracker
+                orders={orders}
+                currentUser={currentUser}
+                onRequireLogin={() => handleOpenAuth('login')}
+                onRefreshStatus={handleRefreshOrderStatus}
+                onShowToast={showToast}
+              />
+            )}
 
-        {activeTab === 'wallet' && (
-          <WalletView
-            userBalance={userBalance}
-            providerBalance={providerBalance}
-            currentUser={currentUser}
-            onRequireLogin={() => handleOpenAuth('login')}
-            onAddFunds={handleAddFunds}
-            onShowToast={showToast}
-          />
-        )}
+            {activeTab === 'wallet' && (
+              <WalletView
+                userBalance={userBalance}
+                providerBalance={providerBalance}
+                currentUser={currentUser}
+                onRequireLogin={() => handleOpenAuth('login')}
+                onAddFunds={handleAddFunds}
+                onShowToast={showToast}
+              />
+            )}
 
-        {activeTab === 'api' && (
-          <ApiSettingsView
-            onShowToast={showToast}
-            onRefreshBalance={fetchProviderBalance}
-          />
-        )}
+            {activeTab === 'referrals' && (
+              <ReferralView
+                currentUser={currentUser}
+                onRequireLogin={() => handleOpenAuth('login')}
+                onShowToast={showToast}
+              />
+            )}
 
-        {activeTab === 'faq' && (
-          <FAQView onNavigateToTab={setActiveTab} />
+            {activeTab === 'api' && (
+              <ApiSettingsView
+                onShowToast={showToast}
+                onRefreshBalance={fetchProviderBalance}
+              />
+            )}
+
+            {activeTab === 'faq' && (
+              <FAQView onNavigateToTab={handleTabChange} />
+            )}
+          </>
         )}
       </main>
 

@@ -2,11 +2,11 @@ import React, { useState, useRef, useEffect } from 'react';
 import {
   RefreshCw, Wallet, Plus, Zap, Settings, User as UserIcon, LogOut,
   Copy, Check, Send, MoreVertical, ShoppingCart, ListChecks,
-  Package, HelpCircle, LogIn, UserPlus
+  Package, HelpCircle, LogIn, UserPlus, Users
 } from 'lucide-react';
 import { User } from '../types.ts';
 
-export type PanelTab = 'new-order' | 'services' | 'orders' | 'wallet' | 'api' | 'faq';
+export type PanelTab = 'new-order' | 'services' | 'orders' | 'wallet' | 'referrals' | 'api' | 'faq';
 
 interface HeaderProps {
   activeTab: PanelTab;
@@ -28,6 +28,7 @@ const TAB_LABELS: Record<PanelTab, string> = {
   'services': 'Services Catalog',
   'orders': 'Orders Tracker',
   'wallet': 'Add Funds & Wallet',
+  'referrals': 'Refer & Earn 5%',
   'api': 'API & Settings',
   'faq': 'FAQ & Help Center'
 };
@@ -47,7 +48,14 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [copiedKey, setCopiedKey] = useState(false);
+  const [avatarError, setAvatarError] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  const userPhoto = currentUser?.photoUrl || currentUser?.photoURL;
+
+  useEffect(() => {
+    setAvatarError(false);
+  }, [userPhoto]);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -145,9 +153,19 @@ export const Header: React.FC<HeaderProps> = ({
               title="All Menu & Account Options"
             >
               {currentUser && (
-                <div className="w-5 h-5 rounded-md bg-gradient-to-tr from-orange-500 to-amber-500 flex items-center justify-center text-white text-[10px] font-bold font-mono">
-                  {getInitials(currentUser.name || currentUser.username)}
-                </div>
+                userPhoto && !avatarError ? (
+                  <img
+                    src={userPhoto}
+                    alt={currentUser.name || currentUser.username}
+                    referrerPolicy="no-referrer"
+                    onError={() => setAvatarError(true)}
+                    className="w-6 h-6 rounded-full object-cover border border-slate-600/80 shrink-0"
+                  />
+                ) : (
+                  <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-orange-500 to-amber-500 flex items-center justify-center text-white text-[10px] font-bold font-mono shrink-0">
+                    {getInitials(currentUser.name || currentUser.username)}
+                  </div>
+                )
               )}
               <MoreVertical className="w-4 h-4" />
             </button>
@@ -159,14 +177,29 @@ export const Header: React.FC<HeaderProps> = ({
                 {/* Section 1: User Account Header or Login/Register */}
                 {currentUser ? (
                   <div className="p-3 bg-slate-900/90 rounded-xl border border-slate-800 space-y-2.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="text-xs font-bold text-white truncate">
-                          {currentUser.name || `@${currentUser.username}`}
-                        </p>
-                        <p className="text-[11px] text-slate-400 font-mono truncate">
-                          {currentUser.email}
-                        </p>
+                    <div className="flex items-center justify-between gap-2.5">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        {userPhoto && !avatarError ? (
+                          <img
+                            src={userPhoto}
+                            alt={currentUser.name || currentUser.username}
+                            referrerPolicy="no-referrer"
+                            onError={() => setAvatarError(true)}
+                            className="w-9 h-9 rounded-full object-cover border border-slate-700 shrink-0"
+                          />
+                        ) : (
+                          <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-orange-500 to-amber-500 flex items-center justify-center text-white text-xs font-bold font-mono shrink-0">
+                            {getInitials(currentUser.name || currentUser.username)}
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-white truncate">
+                            {currentUser.name || `@${currentUser.username}`}
+                          </p>
+                          <p className="text-[11px] text-slate-400 font-mono truncate">
+                            {currentUser.email}
+                          </p>
+                        </div>
                       </div>
                       <span className="text-[10px] uppercase font-bold font-mono px-2 py-0.5 rounded bg-orange-950/60 border border-orange-800/80 text-orange-400 shrink-0">
                         {currentUser.role}
@@ -194,32 +227,19 @@ export const Header: React.FC<HeaderProps> = ({
                 ) : (
                   <div className="p-3 bg-slate-900/90 rounded-xl border border-slate-800 space-y-2.5">
                     <p className="text-xs text-slate-300 font-semibold">
-                      Sign in to manage orders & wallet
+                      Sign in with Google to manage orders & wallet
                     </p>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsMenuOpen(false);
-                          onOpenAuth('login');
-                        }}
-                        className="flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-200 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg transition-colors cursor-pointer"
-                      >
-                        <LogIn className="w-3.5 h-3.5" />
-                        <span>Sign In</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsMenuOpen(false);
-                          onOpenAuth('register');
-                        }}
-                        className="flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold text-white bg-orange-600 hover:bg-orange-500 rounded-lg transition-colors cursor-pointer"
-                      >
-                        <UserPlus className="w-3.5 h-3.5" />
-                        <span>Register</span>
-                      </button>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMenuOpen(false);
+                        onOpenAuth('login');
+                      }}
+                      className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-bold text-slate-900 bg-white hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                    >
+                      <LogIn className="w-3.5 h-3.5" />
+                      <span>Sign in with Google</span>
+                    </button>
                   </div>
                 )}
 
@@ -287,6 +307,19 @@ export const Header: React.FC<HeaderProps> = ({
                     <span className="font-mono text-[11px] text-emerald-400">
                       ₹{userBalance.toFixed(0)}
                     </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => navigateTo('referrals')}
+                    className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-colors cursor-pointer ${
+                      activeTab === 'referrals'
+                        ? 'bg-orange-600 text-white'
+                        : 'text-slate-300 hover:text-white hover:bg-slate-800/70'
+                    }`}
+                  >
+                    <Users className="w-4 h-4 shrink-0" />
+                    <span>Refer & Earn (5%)</span>
                   </button>
 
                   <button

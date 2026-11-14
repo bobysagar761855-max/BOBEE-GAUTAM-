@@ -1,0 +1,165 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Registered user profile with wallet balance and authentication details",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique user ID"
+        },
+        "googleId": {
+          "type": "string",
+          "description": "Google UID if authenticated via Google"
+        },
+        "email": {
+          "type": "string",
+          "description": "User email address"
+        },
+        "username": {
+          "type": "string",
+          "description": "User display handle"
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name"
+        },
+        "walletBalance": {
+          "type": "number",
+          "description": "User personal wallet balance in INR"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["user", "admin"],
+          "description": "Access control role"
+        },
+        "referralCode": {
+          "type": "string",
+          "description": "Invite code for referrals"
+        },
+        "referredBy": {
+          "type": "string",
+          "description": "Inviter user ID"
+        },
+        "referralEarnings": {
+          "type": "number",
+          "description": "Lifetime referral earnings in INR"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Account registration timestamp"
+        }
+      },
+      "required": ["email", "walletBalance", "role"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Financial deposit transactions ledger record",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique transaction ID"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Owner user ID"
+        },
+        "orderId": {
+          "type": "string",
+          "description": "Payment gateway order reference"
+        },
+        "paymentId": {
+          "type": "string",
+          "description": "Verified payment transaction ID"
+        },
+        "amount": {
+          "type": "number",
+          "description": "Deposit amount in INR"
+        },
+        "bonus": {
+          "type": "number",
+          "description": "Promotional bonus added in INR"
+        },
+        "totalCredited": {
+          "type": "number",
+          "description": "Total amount credited to wallet in INR"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "success", "failed", "cancelled"],
+          "description": "Payment status"
+        },
+        "gateway": {
+          "type": "string",
+          "description": "Payment gateway used"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation timestamp"
+        }
+      },
+      "required": ["userId", "amount", "status", "gateway"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "SMM service placement order record",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Order identifier"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Creator user ID"
+        },
+        "serviceId": {
+          "type": "number",
+          "description": "SMM service ID"
+        },
+        "link": {
+          "type": "string",
+          "description": "Target profile or post URL"
+        },
+        "quantity": {
+          "type": "number",
+          "description": "Ordered count"
+        },
+        "charge": {
+          "type": "number",
+          "description": "Total deducted charge in INR"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["Pending", "Processing", "Completed", "Partial", "Cancelled"],
+          "description": "Upstream order execution status"
+        },
+        "providerOrderId": {
+          "type": "string",
+          "description": "Provider upstream order ID"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation ISO timestamp"
+        }
+      },
+      "required": ["userId", "serviceId", "link", "quantity", "charge", "status"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Individual registered users ledger"
+    },
+    "/transactions/{transactionId}": {
+      "schema": { "$ref": "#/entities/Transaction" },
+      "description": "Deposit and payment ledger"
+    },
+    "/orders/{orderId}": {
+      "schema": { "$ref": "#/entities/Order" },
+      "description": "Live SMM provider order placement records"
+    }
+  }
+}

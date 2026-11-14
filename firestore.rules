@@ -1,0 +1,72 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: deny everything by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwnerDoc(userId) {
+      return isSignedIn() && (
+        request.auth.uid == userId ||
+        ('usr-' + request.auth.uid) == userId
+      );
+    }
+
+    function isOwnerField(uidVal) {
+      return isSignedIn() && (
+        uidVal == request.auth.uid ||
+        uidVal == ('usr-' + request.auth.uid)
+      );
+    }
+
+    function isAdmin() {
+      return isVerifiedUser() && (
+        request.auth.token.email == 'bobysagar761855@gmail.com' ||
+        request.auth.token.admin == true
+      );
+    }
+
+    // Connection check document
+    match /test/connection {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    // Users Collection
+    match /users/{userId} {
+      allow get: if isOwnerDoc(userId) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if (isOwnerDoc(userId) && isVerifiedUser()) || isAdmin();
+      allow update: if (isOwnerDoc(userId) && isVerifiedUser()) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Transactions Ledger
+    match /transactions/{transactionId} {
+      allow get: if isOwnerField(resource.data.user_id) || isAdmin();
+      allow list: if isSignedIn() && (isOwnerField(resource.data.user_id) || isAdmin());
+      allow create: if (isVerifiedUser() && isOwnerField(request.resource.data.user_id)) || isAdmin();
+      allow update: if (isVerifiedUser() && isOwnerField(resource.data.user_id)) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Orders Collection
+    match /orders/{orderId} {
+      allow get: if isOwnerField(resource.data.user_id) || isAdmin();
+      allow list: if isSignedIn() && (isOwnerField(resource.data.user_id) || isAdmin());
+      allow create: if (isVerifiedUser() && isOwnerField(request.resource.data.user_id)) || isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+  }
+}

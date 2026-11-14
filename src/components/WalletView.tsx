@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Wallet, QrCode, CreditCard, ArrowUpRight, CheckCircle2, ShieldCheck, 
-  Copy, Check, Sparkles, Smartphone, Landmark, Coins, AlertCircle, 
-  RefreshCw, ExternalLink, HelpCircle, ArrowRight, Send
+import {
+  Wallet, CreditCard, ArrowUpRight, CheckCircle2, ShieldCheck,
+  Check, AlertCircle, RefreshCw, HelpCircle, ArrowRight, Send, Lock
 } from 'lucide-react';
 import { User, DepositRecord } from '../types.ts';
 
@@ -15,8 +14,6 @@ interface WalletViewProps {
   onShowToast: (type: 'success' | 'error' | 'warning' | 'info', title: string, message?: string) => void;
 }
 
-type PaymentMethodType = 'paytm_qr' | 'phonepe' | 'gpay' | 'card' | 'netbanking' | 'crypto';
-
 export const WalletView: React.FC<WalletViewProps> = ({
   userBalance,
   providerBalance,
@@ -25,44 +22,34 @@ export const WalletView: React.FC<WalletViewProps> = ({
   onAddFunds,
   onShowToast
 }) => {
-  const [selectedMethod, setSelectedMethod] = useState<PaymentMethodType>('paytm_qr');
-  const [amount, setAmount] = useState<string>('1000');
-  const [utrNumber, setUtrNumber] = useState<string>('');
+  const [amount, setAmount] = useState<string>('500');
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
-  const [copiedVpa, setCopiedVpa] = useState<boolean>(false);
-  const [copiedCrypto, setCopiedCrypto] = useState<boolean>(false);
-
-  // Card payment state
-  const [cardNumber, setCardNumber] = useState<string>('');
-  const [cardExpiry, setCardExpiry] = useState<string>('');
-  const [cardCvv, setCardCvv] = useState<string>('');
-  const [cardHolder, setCardHolder] = useState<string>('');
-
-  // Netbanking state
-  const [selectedBank, setSelectedBank] = useState<string>('State Bank of India (SBI)');
-
-  // Crypto state
-  const [cryptoTxId, setCryptoTxId] = useState<string>('');
 
   // Deposits history
   const [deposits, setDeposits] = useState<DepositRecord[]>([]);
   const [isLoadingDeposits, setIsLoadingDeposits] = useState<boolean>(false);
 
-  const UPI_VPA = 'bobeegautam1@ptaxis';
-  const CRYPTO_ADDRESS = 'TXn89JkL44vPwQtR12yUm79qZsA67c4E29';
-  const QR_IMAGE_URL = '/assets/aistudio/IMG_20261110_004130_12c35e0e.jpg';
+  const presets = [10, 20, 50, 100, 200, 500, 1000, 2000, 3000, 5000, 10000];
 
-  const presets = [100, 500, 1000, 2000, 5000, 10000];
-
-  // Fetch deposits history
+  // Fetch deposits history strictly for the logged-in user
   const fetchDeposits = async () => {
+    const token = currentUser?.token || localStorage.getItem('hanuman_auth_token');
+    if (!currentUser || !token) {
+      setDeposits([]);
+      return;
+    }
     setIsLoadingDeposits(true);
     try {
-      const url = currentUser ? `/api/deposits?userId=${currentUser.id}` : '/api/deposits';
-      const res = await fetch(url);
+      const res = await fetch('/api/deposits', {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
       const data = await res.json();
-      if (data.success && Array.isArray(data.deposits)) {
+      if (res.ok && data.success && Array.isArray(data.deposits)) {
         setDeposits(data.deposits);
+      } else {
+        setDeposits([]);
       }
     } catch (e) {
       console.error('Failed fetching deposits:', e);
@@ -75,46 +62,11 @@ export const WalletView: React.FC<WalletViewProps> = ({
     fetchDeposits();
   }, [currentUser]);
 
-  // Calculate bonus dynamically
   const parsedAmount = parseFloat(amount) || 0;
-  const calculateBonus = (amt: number, method: PaymentMethodType) => {
-    if ((method === 'paytm_qr' || method === 'phonepe' || method === 'gpay') && amt >= 1000) {
-      return amt >= 5000 ? Math.round(amt * 0.05) : Math.round(amt * 0.03);
-    }
-    if (method === 'crypto' && amt >= 500) {
-      return Math.round(amt * 0.05);
-    }
-    return 0;
-  };
+  const totalWillReceive = parsedAmount;
 
-  const currentBonus = calculateBonus(parsedAmount, selectedMethod);
-  const totalWillReceive = parsedAmount + currentBonus;
-
-  // Copy VPA to clipboard
-  const handleCopyVpa = () => {
-    navigator.clipboard.writeText(UPI_VPA);
-    setCopiedVpa(true);
-    onShowToast('info', 'UPI ID Copied', `${UPI_VPA} copied to clipboard`);
-    setTimeout(() => setCopiedVpa(false), 2000);
-  };
-
-  // Copy Crypto Address
-  const handleCopyCrypto = () => {
-    navigator.clipboard.writeText(CRYPTO_ADDRESS);
-    setCopiedCrypto(true);
-    onShowToast('info', 'Address Copied', 'USDT TRC20 address copied');
-    setTimeout(() => setCopiedCrypto(false), 2000);
-  };
-
-  // Generate test UTR for instant simulation
-  const handleFillTestUtr = () => {
-    const random12 = Math.floor(400000000000 + Math.random() * 599999999999).toString();
-    setUtrNumber(random12);
-    onShowToast('info', 'Simulation UTR Generated', `Sample 12-digit UTR: ${random12}`);
-  };
-
-  // Handle deposit submission
-  const handleDepositSubmit = async (e: React.FormEvent) => {
+  // Handle Razorpay Payment Gateway Checkout
+  const handleRazorpayPayment = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!currentUser) {
@@ -123,51 +75,111 @@ export const WalletView: React.FC<WalletViewProps> = ({
       return;
     }
 
-    if (parsedAmount < 10) {
-      onShowToast('error', 'Minimum Deposit', 'Minimum deposit is ₹10 for UPI, ₹100 for Cards/NetBanking.');
+    if (Number.isNaN(parsedAmount) || parsedAmount < 10 || parsedAmount > 10000) {
+      onShowToast('error', 'Invalid Amount', 'Deposit amount must be between ₹10 and ₹10,000.');
       return;
     }
 
-    if (['paytm_qr', 'phonepe', 'gpay'].includes(selectedMethod)) {
-      if (!utrNumber.trim()) {
-        onShowToast('warning', 'UTR Required', 'Please enter the 12-digit UTR or Transaction ID from your payment.');
-        return;
-      }
+    // Check if Razorpay script loaded
+    if (typeof (window as any).Razorpay === 'undefined') {
+      onShowToast('error', 'Gateway Error', 'Razorpay Checkout SDK is still loading. Please check your internet connection and try again.');
+      return;
     }
 
     setIsProcessing(true);
     try {
-      const response = await fetch('/api/deposit/submit', {
+      const token = currentUser.token || localStorage.getItem('hanuman_auth_token') || '';
+
+      // 1. Create order on backend
+      const orderRes = await fetch('/api/wallet/create-order', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: currentUser.id,
-          amount: parsedAmount,
-          method: selectedMethod,
-          utrNumber: utrNumber.trim() || undefined,
-          note: selectedMethod === 'crypto' ? cryptoTxId : undefined
-        })
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ amount: parsedAmount })
       });
 
-      const data = await response.json();
+      const orderData = await orderRes.json();
 
-      if (response.ok && data.success) {
-        onAddFunds(data.totalCredited || totalWillReceive, selectedMethod.toUpperCase(), data.newBalance);
-        onShowToast(
-          'success', 
-          'Payment Verified & Credited!', 
-          `₹${(data.totalCredited || totalWillReceive).toFixed(2)} added to your wallet ${currentBonus > 0 ? `(including ₹${currentBonus} bonus)` : ''}`
-        );
-        setUtrNumber('');
-        setCryptoTxId('');
-        fetchDeposits();
-      } else {
-        onShowToast('error', 'Deposit Error', data.error || 'Failed to verify transaction.');
+      if (!orderRes.ok || !orderData.success) {
+        throw new Error(orderData.error || orderData.message || 'Failed to initialize payment gateway.');
       }
+
+      // 2. Open Razorpay Checkout modal
+      const options = {
+        key: orderData.key_id,
+        amount: orderData.amount,
+        currency: orderData.currency || 'INR',
+        name: 'Boby SMM Panel',
+        description: `Wallet Balance Top-up (₹${parsedAmount.toFixed(2)})`,
+        image: 'https://cdn-icons-png.flaticon.com/512/9131/9131529.png',
+        order_id: orderData.order_id,
+        prefill: {
+          name: currentUser.name || orderData.user?.name || '',
+          email: currentUser.email || orderData.user?.email || '',
+          contact: currentUser.phone || orderData.user?.phone || ''
+        },
+        theme: {
+          color: '#ea580c'
+        },
+        handler: async function (response: any) {
+          setIsProcessing(true);
+          try {
+            // 3. Verify payment signature on backend
+            const verifyRes = await fetch('/api/wallet/verify-payment', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`
+              },
+              body: JSON.stringify({
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature,
+                amount: parsedAmount
+              })
+            });
+
+            const verifyData = await verifyRes.json();
+
+            if (verifyRes.ok && verifyData.success) {
+              onAddFunds(verifyData.totalCredited || totalWillReceive, 'RAZORPAY', verifyData.newBalance);
+              onShowToast(
+                'success',
+                'Payment Verified & Credited!',
+                `₹${(verifyData.totalCredited || totalWillReceive).toFixed(2)} added to your wallet successfully.`
+              );
+              fetchDeposits();
+            } else {
+              onShowToast('error', 'Verification Failed', verifyData.error || verifyData.message || 'Payment signature could not be verified.');
+              fetchDeposits();
+            }
+          } catch (vErr: any) {
+            onShowToast('error', 'Verification Error', vErr?.message || 'Error communicating with verification server.');
+          } finally {
+            setIsProcessing(false);
+          }
+        },
+        modal: {
+          ondismiss: function () {
+            setIsProcessing(false);
+            onShowToast('info', 'Payment Dismissed', 'Razorpay checkout was closed without completing payment.');
+            fetchDeposits();
+          }
+        }
+      };
+
+      const razorpay = new (window as any).Razorpay(options);
+      razorpay.on('payment.failed', function (resp: any) {
+        setIsProcessing(false);
+        onShowToast('error', 'Payment Failed', resp.error?.description || 'Transaction was declined by bank or gateway.');
+        fetchDeposits();
+      });
+      razorpay.open();
     } catch (err: any) {
-      onShowToast('error', 'Network Error', err.message || 'Unable to verify payment right now.');
-    } finally {
       setIsProcessing(false);
+      onShowToast('error', 'Gateway Error', err?.message || 'Failed to initiate Razorpay checkout.');
     }
   };
 
@@ -182,7 +194,7 @@ export const WalletView: React.FC<WalletViewProps> = ({
             Sign In to View Balance & Add Payment
           </h2>
           <p className="text-xs text-slate-400 leading-relaxed max-w-md mx-auto">
-            Your wallet balance and deposits are securely tied to your account. Please sign in or create an account first to add funds via Paytm UPI QR, PhonePe, GPay, Cards, or Crypto.
+            Your wallet balance and deposits are securely tied to your account. Please sign in or create an account first to add funds securely via Razorpay.
           </p>
         </div>
         <button
@@ -199,37 +211,30 @@ export const WalletView: React.FC<WalletViewProps> = ({
 
   return (
     <div className="space-y-8 animate-in fade-in duration-200">
-      
+
       {/* Header */}
       <div className="pb-4 border-b border-slate-800 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight flex items-center gap-2.5">
             <Wallet className="w-6 h-6 text-orange-500" />
-            <span>Add Funds & Payment Methods</span>
+            <span>Add Funds to Wallet</span>
           </h1>
           <p className="text-xs text-slate-400 mt-1">
-            Top up your SMM reseller wallet via Paytm UPI QR, PhonePe, Google Pay, Cards, NetBanking, or Crypto.
+            Top up your SMM reseller wallet securely via Razorpay automated instant checkout.
           </p>
         </div>
 
-        {/* Quick VPA Badge */}
+        {/* Gateway Security Badge */}
         <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 shrink-0">
-          <span className="text-[10px] text-slate-400 uppercase font-semibold">Official UPI:</span>
-          <span className="font-mono text-xs font-bold text-orange-400">{UPI_VPA}</span>
-          <button
-            type="button"
-            onClick={handleCopyVpa}
-            className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-white transition-colors cursor-pointer"
-            title="Copy UPI ID"
-          >
-            {copiedVpa ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-          </button>
+          <Lock className="w-3.5 h-3.5 text-emerald-400" />
+          <span className="text-[10px] text-slate-400 uppercase font-semibold">Gateway:</span>
+          <span className="font-mono text-xs font-bold text-blue-400">Razorpay Verified</span>
         </div>
       </div>
 
-      {/* Top Balance Cards & Special Bonus Banner */}
+      {/* Top Balance Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-        
+
         {/* Your Wallet Balance */}
         <div className="p-5 rounded-2xl bg-gradient-to-br from-emerald-950/40 via-slate-900 to-slate-900 border border-emerald-800/40 relative overflow-hidden">
           <div className="flex items-center justify-between">
@@ -266,23 +271,23 @@ export const WalletView: React.FC<WalletViewProps> = ({
           </p>
         </div>
 
-        {/* Promo Bonus Offer Banner */}
-        <div className="p-5 rounded-2xl bg-gradient-to-br from-orange-950/50 via-slate-900 to-slate-900 border border-orange-500/40 relative overflow-hidden flex flex-col justify-between">
+        {/* Instant Gateway Assurance Card */}
+        <div className="p-5 rounded-2xl bg-gradient-to-br from-blue-950/40 via-slate-900 to-slate-900 border border-blue-500/30 relative overflow-hidden flex flex-col justify-between">
           <div className="flex items-center justify-between">
-            <span className="text-xs uppercase font-bold tracking-wider text-orange-400 flex items-center gap-1.5">
-              <Sparkles className="w-4 h-4 text-orange-400" />
-              <span>Special Bonus Offer</span>
+            <span className="text-xs uppercase font-bold tracking-wider text-blue-400 flex items-center gap-1.5">
+              <CreditCard className="w-4 h-4 text-blue-400" />
+              <span>Razorpay Checkout</span>
             </span>
-            <span className="text-[10px] bg-orange-500/20 text-orange-300 font-bold px-2 py-0.5 rounded-full font-mono">
-              ACTIVE
+            <span className="text-[10px] bg-blue-500/20 text-blue-300 font-bold px-2 py-0.5 rounded-full font-mono">
+              INSTANT
             </span>
           </div>
           <div className="mt-2 space-y-1">
             <div className="text-sm font-black text-white">
-              +3% to +5% Extra Free Balance
+              Automated Instant Wallet Credit
             </div>
             <p className="text-[11px] text-slate-300 leading-snug">
-              Deposit ₹1,000+ via Paytm UPI to get <strong>3% extra</strong>, or ₹5,000+ to get <strong>5% extra balance</strong> credited instantly!
+              Deposit ₹10 – ₹10,000 securely with cryptographic verification and immediate balance updates.
             </p>
           </div>
         </div>
@@ -291,144 +296,62 @@ export const WalletView: React.FC<WalletViewProps> = ({
 
       {/* Main Payment Section */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-        
-        {/* Left: Payment Form & Gateway Selection */}
+
+        {/* Left: Razorpay Payment Form */}
         <div className="lg:col-span-8 bg-[#0f172a]/80 rounded-2xl border border-slate-800 p-6 sm:p-8 backdrop-blur-sm space-y-6">
-          
+
           <div className="flex items-center justify-between">
             <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
               <ArrowUpRight className="w-5 h-5 text-orange-500" />
-              <span>Select Payment Gateway</span>
+              <span>Payment Gateway</span>
             </h2>
             <span className="text-xs text-slate-400">0% Gateway Fee · Instant Credit</span>
           </div>
 
-          {/* Payment Method Selector Grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            
-            {/* 1. Paytm UPI QR */}
-            <button
-              type="button"
-              onClick={() => setSelectedMethod('paytm_qr')}
-              className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer relative ${
-                selectedMethod === 'paytm_qr'
-                  ? 'bg-orange-500/10 border-orange-500 text-white shadow-md shadow-orange-500/10'
-                  : 'bg-slate-900/90 border-slate-800 text-slate-400 hover:text-white hover:border-slate-700'
-              }`}
-            >
-              <div className="absolute top-2.5 right-2.5 text-[9px] uppercase font-extrabold bg-orange-500/20 text-orange-400 px-1.5 py-0.5 rounded">
-                +3% Bonus
+          {/* Single Razorpay Gateway Selector Card */}
+          <div className="p-4 rounded-xl border bg-gradient-to-br from-blue-600/20 to-orange-500/20 border-blue-500 text-white shadow-lg shadow-blue-500/10 ring-1 ring-blue-500 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-blue-600/30 border border-blue-500/40 flex items-center justify-center">
+                <CreditCard className="w-5 h-5 text-blue-400" />
               </div>
-              <QrCode className="w-5 h-5 text-orange-400 mb-2" />
-              <div className="text-xs font-extrabold text-white">Paytm UPI QR</div>
-              <div className="text-[10px] text-slate-500 mt-0.5">Paytm / Any UPI App</div>
-            </button>
-
-            {/* 2. PhonePe Direct */}
-            <button
-              type="button"
-              onClick={() => setSelectedMethod('phonepe')}
-              className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
-                selectedMethod === 'phonepe'
-                  ? 'bg-orange-500/10 border-orange-500 text-white shadow-md shadow-orange-500/10'
-                  : 'bg-slate-900/90 border-slate-800 text-slate-400 hover:text-white hover:border-slate-700'
-              }`}
-            >
-              <Smartphone className="w-5 h-5 text-purple-400 mb-2" />
-              <div className="text-xs font-extrabold text-white">PhonePe UPI</div>
-              <div className="text-[10px] text-slate-500 mt-0.5">Direct Intent / VPA</div>
-            </button>
-
-            {/* 3. Google Pay */}
-            <button
-              type="button"
-              onClick={() => setSelectedMethod('gpay')}
-              className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
-                selectedMethod === 'gpay'
-                  ? 'bg-orange-500/10 border-orange-500 text-white shadow-md shadow-orange-500/10'
-                  : 'bg-slate-900/90 border-slate-800 text-slate-400 hover:text-white hover:border-slate-700'
-              }`}
-            >
-              <Smartphone className="w-5 h-5 text-sky-400 mb-2" />
-              <div className="text-xs font-extrabold text-white">Google Pay (GPay)</div>
-              <div className="text-[10px] text-slate-500 mt-0.5">Fast UPI Transfer</div>
-            </button>
-
-            {/* 4. Debit / Credit Cards */}
-            <button
-              type="button"
-              onClick={() => setSelectedMethod('card')}
-              className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
-                selectedMethod === 'card'
-                  ? 'bg-orange-500/10 border-orange-500 text-white shadow-md shadow-orange-500/10'
-                  : 'bg-slate-900/90 border-slate-800 text-slate-400 hover:text-white hover:border-slate-700'
-              }`}
-            >
-              <CreditCard className="w-5 h-5 text-emerald-400 mb-2" />
-              <div className="text-xs font-extrabold text-white">Debit / Credit Cards</div>
-              <div className="text-[10px] text-slate-500 mt-0.5">Visa, Master, RuPay</div>
-            </button>
-
-            {/* 5. Net Banking */}
-            <button
-              type="button"
-              onClick={() => setSelectedMethod('netbanking')}
-              className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
-                selectedMethod === 'netbanking'
-                  ? 'bg-orange-500/10 border-orange-500 text-white shadow-md shadow-orange-500/10'
-                  : 'bg-slate-900/90 border-slate-800 text-slate-400 hover:text-white hover:border-slate-700'
-              }`}
-            >
-              <Landmark className="w-5 h-5 text-amber-400 mb-2" />
-              <div className="text-xs font-extrabold text-white">Net Banking</div>
-              <div className="text-[10px] text-slate-500 mt-0.5">SBI, HDFC, ICICI, etc.</div>
-            </button>
-
-            {/* 6. Crypto USDT */}
-            <button
-              type="button"
-              onClick={() => setSelectedMethod('crypto')}
-              className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer relative ${
-                selectedMethod === 'crypto'
-                  ? 'bg-orange-500/10 border-orange-500 text-white shadow-md shadow-orange-500/10'
-                  : 'bg-slate-900/90 border-slate-800 text-slate-400 hover:text-white hover:border-slate-700'
-              }`}
-            >
-              <div className="absolute top-2.5 right-2.5 text-[9px] uppercase font-extrabold bg-purple-500/20 text-purple-400 px-1.5 py-0.5 rounded">
-                +5% Bonus
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-extrabold text-white">Pay with Razorpay</span>
+                  <span className="text-[10px] font-bold text-blue-400 font-mono tracking-tight">RAZORPAY</span>
+                </div>
+                <p className="text-[11px] text-slate-300 mt-0.5">
+                  Automated checkout supporting UPI, Cards, NetBanking & Wallets
+                </p>
               </div>
-              <Coins className="w-5 h-5 text-purple-400 mb-2" />
-              <div className="text-xs font-extrabold text-white">USDT Crypto</div>
-              <div className="text-[10px] text-slate-500 mt-0.5">TRC20 / BEP20</div>
-            </button>
-
+            </div>
+            <span className="text-[9px] uppercase font-extrabold bg-blue-500/20 text-blue-300 border border-blue-500/30 px-2 py-0.5 rounded shrink-0">
+              Instant Auto
+            </span>
           </div>
 
-          <form onSubmit={handleDepositSubmit} className="space-y-6">
-            
+          <form onSubmit={handleRazorpayPayment} className="space-y-6">
+
             {/* Amount Selection */}
             <div>
               <div className="flex items-center justify-between mb-2">
                 <label className="text-xs font-semibold uppercase text-slate-300 tracking-wider">
                   Deposit Amount (₹ INR)
                 </label>
-                {currentBonus > 0 && (
-                  <span className="text-[11px] font-mono text-emerald-400 font-bold flex items-center gap-1">
-                    <Sparkles className="w-3 h-3" />
-                    <span>+₹{currentBonus} Extra Bonus Applied!</span>
-                  </span>
-                )}
+                <span className="text-[11px] font-mono text-slate-400">
+                  Limit: ₹10 – ₹10,000
+                </span>
               </div>
               <div className="relative">
                 <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 font-bold text-lg">₹</span>
                 <input
                   type="number"
                   min="10"
-                  step="10"
+                  max="10000"
+                  step="1"
                   required
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}
-                  placeholder="Enter amount (min ₹10)"
+                  placeholder="Enter amount (₹10 - ₹10,000)"
                   className="w-full bg-slate-900 border border-slate-700 rounded-xl pl-9 pr-4 py-3 text-lg font-mono font-bold text-white focus:outline-none focus:border-orange-500 transition-colors tabular-nums"
                 />
               </div>
@@ -448,335 +371,61 @@ export const WalletView: React.FC<WalletViewProps> = ({
                     }`}
                   >
                     ₹{p.toLocaleString('en-IN')}
-                    {p >= 1000 && <span className="ml-1 text-[10px] text-orange-300">+{p >= 5000 ? '5%' : '3%'}</span>}
                   </button>
                 ))}
               </div>
             </div>
 
-            {/* ================= METHOD 1: PAYTM UPI QR ================= */}
-            {selectedMethod === 'paytm_qr' && (
-              <div className="p-4 sm:p-5 bg-gradient-to-b from-slate-900 to-[#0b1329] border border-sky-500/30 rounded-2xl space-y-5">
-                
-                <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-                  <div className="flex items-center gap-2">
-                    <div className="w-7 h-7 rounded-lg bg-[#00BAF2] text-white flex items-center justify-center font-bold text-xs">
-                      P
-                    </div>
-                    <div>
-                      <h4 className="text-xs font-bold text-white">Paytm ❤️ UPI Instant QR</h4>
-                      <p className="text-[10px] text-slate-400">Scan with Paytm, PhonePe, Google Pay, or BHIM</p>
-                    </div>
+            {/* Razorpay Gateway Details */}
+            <div className="p-4 sm:p-5 bg-gradient-to-b from-slate-900 to-[#07132a] border border-blue-500/30 rounded-2xl space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold text-xs shadow-md shadow-blue-600/30">
+                    ₹
                   </div>
-                  <span className="text-[10px] font-mono bg-sky-500/20 text-sky-300 px-2 py-0.5 rounded font-bold">
-                    Official Merchant QR
-                  </span>
-                </div>
-
-                {/* QR Code and Instructions side-by-side */}
-                <div className="grid grid-cols-1 sm:grid-cols-12 gap-5 items-center">
-                  
-                  {/* Left: The Real Uploaded Paytm QR Code Image */}
-                  <div className="sm:col-span-5 flex flex-col items-center">
-                    <div className="p-2 bg-white rounded-2xl shadow-xl shadow-sky-500/10 border border-sky-400 max-w-[210px] w-full">
-                      <img 
-                        src={QR_IMAGE_URL} 
-                        alt="Paytm UPI QR Code - bobeegautam1@ptaxis"
-                        className="w-full h-auto rounded-xl object-contain block"
-                      />
-                    </div>
-                    <span className="text-[10px] font-mono text-slate-400 mt-2">
-                      Scan using any UPI App
-                    </span>
-                  </div>
-
-                  {/* Right: Step-by-Step Payment Instructions & VPA Copy */}
-                  <div className="sm:col-span-7 space-y-3.5 text-xs">
-                    
-                    {/* Copy UPI ID Box */}
-                    <div className="p-3 bg-slate-900/90 border border-slate-700/80 rounded-xl space-y-1.5">
-                      <span className="text-[10px] text-slate-400 uppercase font-semibold block">
-                        UPI ID / VPA
+                  <div>
+                    <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <span>Razorpay Instant Automated Gateway</span>
+                      <span className="text-[9px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded font-mono">
+                        SECURE
                       </span>
-                      <div className="flex items-center justify-between">
-                        <span className="font-mono text-xs sm:text-sm font-extrabold text-orange-400 select-all">
-                          {UPI_VPA}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={handleCopyVpa}
-                          className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-xs flex items-center gap-1.5 cursor-pointer transition-colors"
-                        >
-                          {copiedVpa ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                          <span>{copiedVpa ? 'Copied' : 'Copy UPI'}</span>
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Steps list */}
-                    <ol className="space-y-1.5 text-slate-300 text-[11px] list-decimal list-inside leading-relaxed">
-                      <li>Open Paytm, PhonePe, Google Pay, or BHIM.</li>
-                      <li>Scan the QR code on the left or pay to <strong className="text-white font-mono">{UPI_VPA}</strong>.</li>
-                      <li>Pay the exact amount: <strong className="text-orange-400 font-mono">₹{parsedAmount.toFixed(2)}</strong>.</li>
-                      <li>Copy the <strong>12-digit UTR / Transaction ID</strong> from your UPI payment receipt.</li>
-                      <li>Paste the UTR number below and click Verify.</li>
-                    </ol>
-
-                    {/* Mobile UPI Deep Link */}
-                    <a
-                      href={`upi://pay?pa=${UPI_VPA}&pn=BobySMMPanel&am=${parsedAmount}&cu=INR`}
-                      className="inline-flex items-center gap-2 text-xs font-semibold text-sky-400 hover:text-sky-300 underline"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5" />
-                      <span>Pay via UPI App on Mobile</span>
-                    </a>
-
+                    </h4>
+                    <p className="text-[10px] text-slate-400">256-bit Encrypted Payment Processing & HMAC Signature Verification</p>
                   </div>
-
                 </div>
+                <span className="text-[10px] font-mono text-blue-400 font-bold bg-blue-950/60 border border-blue-800/60 px-2 py-0.5 rounded">
+                  Official SDK
+                </span>
+              </div>
 
-                {/* UTR Input Field */}
-                <div className="pt-2 border-t border-slate-800">
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="text-xs font-semibold uppercase text-slate-300 tracking-wider">
-                      Enter 12-Digit Transaction ID (UTR / Ref No) *
-                    </label>
-                    <button
-                      type="button"
-                      onClick={handleFillTestUtr}
-                      className="text-[11px] text-orange-400 hover:text-orange-300 font-semibold underline cursor-pointer"
-                    >
-                      Use Test UTR
-                    </button>
-                  </div>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      maxLength={18}
-                      required
-                      value={utrNumber}
-                      onChange={(e) => setUtrNumber(e.target.value.replace(/[^a-zA-Z0-9]/g, ''))}
-                      placeholder="e.g. 412389104821 (12 digits from receipt)"
-                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-xs sm:text-sm font-mono text-white placeholder-slate-500 focus:outline-none focus:border-orange-500 transition-colors tracking-wider"
-                    />
-                  </div>
-                  <p className="text-[11px] text-slate-500 mt-1">
-                    Found in your bank statement or UPI app under "UPI Ref No" or "Transaction ID".
+              <div className="p-3.5 bg-slate-800/40 border border-slate-800 rounded-xl space-y-2 text-xs text-slate-300">
+                <div className="flex items-start gap-2.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  <p className="leading-relaxed">
+                    Clicking <strong>"Pay with Razorpay"</strong> below will open the official Razorpay checkout popup.
                   </p>
                 </div>
-
-              </div>
-            )}
-
-            {/* ================= METHOD 2 & 3: PHONEPE & GOOGLE PAY ================= */}
-            {(selectedMethod === 'phonepe' || selectedMethod === 'gpay') && (
-              <div className="p-4 sm:p-5 bg-slate-900/90 border border-slate-800 rounded-2xl space-y-4">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-bold text-white flex items-center gap-2">
-                    <Smartphone className="w-4 h-4 text-orange-400" />
-                    <span>{selectedMethod === 'phonepe' ? 'PhonePe UPI Transfer' : 'Google Pay (GPay) Transfer'}</span>
-                  </h4>
-                  <span className="text-[10px] font-mono text-slate-400">VPA: {UPI_VPA}</span>
-                </div>
-
-                <div className="p-3 bg-slate-800/60 rounded-xl space-y-2 text-xs text-slate-300">
-                  <p>Send <strong>₹{parsedAmount.toFixed(2)}</strong> to UPI ID:</p>
-                  <div className="flex items-center justify-between bg-black/40 p-2.5 rounded-lg border border-slate-700">
-                    <span className="font-mono font-bold text-orange-400 text-sm">{UPI_VPA}</span>
-                    <button
-                      type="button"
-                      onClick={handleCopyVpa}
-                      className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-xs rounded text-slate-200 flex items-center gap-1 cursor-pointer"
-                    >
-                      {copiedVpa ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                      <span>Copy</span>
-                    </button>
-                  </div>
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="text-xs font-semibold uppercase text-slate-300 tracking-wider">
-                      12-Digit Transaction Ref / UTR *
-                    </label>
-                    <button
-                      type="button"
-                      onClick={handleFillTestUtr}
-                      className="text-[11px] text-orange-400 hover:underline cursor-pointer"
-                    >
-                      Use Test UTR
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    required
-                    value={utrNumber}
-                    onChange={(e) => setUtrNumber(e.target.value.replace(/[^a-zA-Z0-9]/g, ''))}
-                    placeholder="e.g. 409182746194"
-                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-xs sm:text-sm font-mono text-white placeholder-slate-500 focus:outline-none focus:border-orange-500 transition-colors"
-                  />
-                </div>
-              </div>
-            )}
-
-            {/* ================= METHOD 4: DEBIT / CREDIT CARDS ================= */}
-            {selectedMethod === 'card' && (
-              <div className="p-4 sm:p-5 bg-slate-900/90 border border-slate-800 rounded-2xl space-y-4">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-bold text-white flex items-center gap-2">
-                    <CreditCard className="w-4 h-4 text-emerald-400" />
-                    <span>Card Payment Details</span>
-                  </h4>
-                  <span className="text-[10px] text-slate-400 font-mono">Visa / Master / RuPay</span>
-                </div>
-
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-[11px] uppercase font-semibold text-slate-400 mb-1">
-                      Cardholder Name
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={cardHolder}
-                      onChange={(e) => setCardHolder(e.target.value)}
-                      placeholder="e.g. Rahul Sharma"
-                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-orange-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] uppercase font-semibold text-slate-400 mb-1">
-                      Card Number
-                    </label>
-                    <input
-                      type="text"
-                      maxLength={19}
-                      required
-                      value={cardNumber}
-                      onChange={(e) => setCardNumber(e.target.value.replace(/[^0-9 ]/g, ''))}
-                      placeholder="4532 •••• •••• 8912"
-                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-orange-500"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[11px] uppercase font-semibold text-slate-400 mb-1">
-                        Expiry Date
-                      </label>
-                      <input
-                        type="text"
-                        maxLength={5}
-                        required
-                        value={cardExpiry}
-                        onChange={(e) => setCardExpiry(e.target.value)}
-                        placeholder="MM/YY"
-                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-orange-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] uppercase font-semibold text-slate-400 mb-1">
-                        CVV / CVC
-                      </label>
-                      <input
-                        type="password"
-                        maxLength={4}
-                        required
-                        value={cardCvv}
-                        onChange={(e) => setCardCvv(e.target.value.replace(/[^0-9]/g, ''))}
-                        placeholder="•••"
-                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-orange-500"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* ================= METHOD 5: NET BANKING ================= */}
-            {selectedMethod === 'netbanking' && (
-              <div className="p-4 sm:p-5 bg-slate-900/90 border border-slate-800 rounded-2xl space-y-4">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-bold text-white flex items-center gap-2">
-                    <Landmark className="w-4 h-4 text-amber-400" />
-                    <span>Select Your Bank</span>
-                  </h4>
-                  <span className="text-[10px] text-slate-400 font-mono">50+ Indian Banks</span>
-                </div>
-
-                <div>
-                  <label className="block text-[11px] uppercase font-semibold text-slate-400 mb-1">
-                    Popular Banks
-                  </label>
-                  <select
-                    value={selectedBank}
-                    onChange={(e) => setSelectedBank(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-orange-500 cursor-pointer"
-                  >
-                    <option value="State Bank of India (SBI)">State Bank of India (SBI)</option>
-                    <option value="HDFC Bank">HDFC Bank</option>
-                    <option value="ICICI Bank">ICICI Bank</option>
-                    <option value="Axis Bank">Axis Bank</option>
-                    <option value="Punjab National Bank (PNB)">Punjab National Bank (PNB)</option>
-                    <option value="Kotak Mahindra Bank">Kotak Mahindra Bank</option>
-                    <option value="Bank of Baroda (BOB)">Bank of Baroda (BOB)</option>
-                    <option value="Canara Bank">Canara Bank</option>
-                    <option value="Union Bank of India">Union Bank of India</option>
-                    <option value="IndusInd Bank">IndusInd Bank</option>
-                  </select>
-                </div>
-              </div>
-            )}
-
-            {/* ================= METHOD 6: CRYPTO USDT ================= */}
-            {selectedMethod === 'crypto' && (
-              <div className="p-4 sm:p-5 bg-slate-900/90 border border-purple-500/30 rounded-2xl space-y-4">
-                <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-                  <h4 className="text-xs font-bold text-white flex items-center gap-2">
-                    <Coins className="w-4 h-4 text-purple-400" />
-                    <span>USDT Deposit (TRC20 / BEP20)</span>
-                  </h4>
-                  <span className="text-[10px] font-mono bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded font-bold">
-                    +5% Extra Bonus
-                  </span>
-                </div>
-
-                <div className="p-3 bg-purple-950/20 border border-purple-800/40 rounded-xl space-y-2 text-xs">
-                  <div className="flex justify-between items-center text-[11px] text-slate-400">
-                    <span>USDT TRC20 Wallet Address:</span>
-                    <span className="font-mono text-purple-300">Rate: 1 USDT = ₹89.50</span>
-                  </div>
-                  <div className="flex items-center justify-between bg-black/50 p-2.5 rounded-lg border border-purple-500/30">
-                    <span className="font-mono text-xs text-purple-300 truncate mr-2">{CRYPTO_ADDRESS}</span>
-                    <button
-                      type="button"
-                      onClick={handleCopyCrypto}
-                      className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-xs rounded text-slate-200 flex items-center gap-1 cursor-pointer shrink-0"
-                    >
-                      {copiedCrypto ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                      <span>Copy</span>
-                    </button>
-                  </div>
-                  <p className="text-[10px] text-slate-400">
-                    Estimated USDT: <strong className="text-white font-mono">{(parsedAmount / 89.50).toFixed(2)} USDT</strong>
+                <div className="flex items-start gap-2.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  <p className="leading-relaxed">
+                    Complete your payment seamlessly via any supported method inside the Razorpay modal.
                   </p>
                 </div>
-
-                <div>
-                  <label className="block text-xs font-semibold uppercase text-slate-300 tracking-wider mb-1.5">
-                    Blockchain Transaction Hash (TXID)
-                  </label>
-                  <input
-                    type="text"
-                    value={cryptoTxId}
-                    onChange={(e) => setCryptoTxId(e.target.value)}
-                    placeholder="e.g. 7f9201a4e8..."
-                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-orange-500"
-                  />
+                <div className="flex items-start gap-2.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  <p className="leading-relaxed">
+                    Your payment signature is automatically verified by the server and funds are added to your wallet in real time.
+                  </p>
                 </div>
               </div>
-            )}
+
+              <div className="flex items-center justify-between p-3 bg-blue-950/30 border border-blue-900/50 rounded-xl text-xs">
+                <span className="text-slate-400">Payer Account:</span>
+                <span className="font-semibold text-white truncate max-w-[240px]">
+                  {currentUser?.name} ({currentUser?.email})
+                </span>
+              </div>
+            </div>
 
             {/* Total Summary Breakdown */}
             <div className="p-3.5 bg-slate-900/90 border border-slate-800 rounded-xl flex items-center justify-between text-xs">
@@ -788,29 +437,27 @@ export const WalletView: React.FC<WalletViewProps> = ({
               </div>
               <div className="text-right">
                 <span className="text-slate-500 text-[10px] block">Fee: 0% · Zero Commission</span>
-                {currentBonus > 0 && (
-                  <span className="text-orange-400 font-bold font-mono text-[11px]">
-                    Includes ₹{currentBonus} Bonus
-                  </span>
-                )}
+                <span className="text-blue-400 font-bold font-mono text-[11px]">
+                  Instant Auto Credit
+                </span>
               </div>
             </div>
 
-            {/* Submit Verification Button */}
+            {/* Submit Razorpay Payment Button */}
             <button
               type="submit"
-              disabled={isProcessing || parsedAmount < 10}
-              className="w-full py-3.5 px-6 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-extrabold rounded-xl shadow-lg shadow-emerald-600/20 transition-all flex items-center justify-center gap-2 cursor-pointer text-xs uppercase tracking-wider"
+              disabled={isProcessing || parsedAmount < 10 || parsedAmount > 10000}
+              className="w-full py-3.5 px-6 disabled:opacity-50 text-white font-extrabold rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer text-xs uppercase tracking-wider bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 shadow-blue-600/30"
             >
               {isProcessing ? (
                 <>
                   <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  <span>Verifying Transaction...</span>
+                  <span>Processing Razorpay Payment...</span>
                 </>
               ) : (
                 <>
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>Verify Payment & Credit ₹{totalWillReceive.toFixed(2)}</span>
+                  <CreditCard className="w-4 h-4" />
+                  <span>Pay ₹{totalWillReceive.toFixed(2)} with Razorpay</span>
                 </>
               )}
             </button>
@@ -821,7 +468,7 @@ export const WalletView: React.FC<WalletViewProps> = ({
 
         {/* Right: Payment Instructions, Support & Guarantees */}
         <div className="lg:col-span-4 space-y-6">
-          
+
           {/* Quick Payment Instructions */}
           <div className="bg-[#0f172a]/80 rounded-2xl border border-slate-800 p-6 backdrop-blur-sm space-y-4 text-xs">
             <h3 className="text-sm font-bold uppercase tracking-wider text-slate-200 flex items-center gap-2">
@@ -831,18 +478,18 @@ export const WalletView: React.FC<WalletViewProps> = ({
 
             <div className="space-y-3 text-slate-400 leading-relaxed text-[11px]">
               <div className="p-3 bg-slate-900 rounded-xl border border-slate-800">
-                <span className="text-white font-bold block mb-1">Step 1: Scan & Pay</span>
-                Scan the Paytm QR with Paytm, PhonePe, Google Pay, or BHIM, and transfer the exact amount.
+                <span className="text-white font-bold block mb-1">Step 1: Choose Amount</span>
+                Select a quick amount tile (₹10 – ₹10,000) or enter your custom deposit amount.
               </div>
 
               <div className="p-3 bg-slate-900 rounded-xl border border-slate-800">
-                <span className="text-white font-bold block mb-1">Step 2: Copy 12-Digit UTR</span>
-                In your payment receipt, copy the 12-digit UPI Ref Number (e.g. 412389104821).
+                <span className="text-white font-bold block mb-1">Step 2: Complete Checkout</span>
+                Click "Pay with Razorpay" and confirm your payment safely inside the Razorpay popup.
               </div>
 
               <div className="p-3 bg-slate-900 rounded-xl border border-slate-800">
                 <span className="text-white font-bold block mb-1">Step 3: Instant Credit</span>
-                Paste the UTR in the box and click verify. Your wallet balance is funded in seconds.
+                Our server verifies the Razorpay signature and updates your wallet balance immediately.
               </div>
             </div>
           </div>
@@ -856,14 +503,14 @@ export const WalletView: React.FC<WalletViewProps> = ({
               </span>
             </div>
             <p className="text-[11px] text-slate-400 leading-relaxed">
-              Did your bank deduct money but your wallet didn't update? Contact support with your 12-digit UTR for manual review within 2 minutes.
+              Did your payment succeed but your wallet didn't update? Contact support with your Razorpay Payment ID for instant assistance.
             </p>
             <div className="pt-2 flex flex-col gap-1.5 text-[11px] font-mono">
               <div className="text-slate-300">
-                <span className="text-slate-500">Merchant VPA:</span> {UPI_VPA}
+                <span className="text-slate-500">Gateway:</span> Razorpay Secure Checkout
               </div>
               <div className="text-slate-300">
-                <span className="text-slate-500">Account:</span> Bobee Gautam
+                <span className="text-slate-500">Account:</span> {currentUser.name}
               </div>
             </div>
             <a
@@ -883,13 +530,13 @@ export const WalletView: React.FC<WalletViewProps> = ({
 
       {/* Bottom: Transaction History Table */}
       <div className="bg-[#0f172a]/80 rounded-2xl border border-slate-800 p-6 backdrop-blur-sm space-y-4">
-        
+
         <div className="flex items-center justify-between pb-3 border-b border-slate-800">
           <div>
             <h3 className="text-sm sm:text-base font-bold text-white tracking-tight">
               Recent Deposits & Transactions
             </h3>
-            <p className="text-xs text-slate-400">History of your payment transfers and wallet top-ups.</p>
+            <p className="text-xs text-slate-400">History of your Razorpay payment transactions and wallet top-ups.</p>
           </div>
           <button
             type="button"
@@ -904,19 +551,18 @@ export const WalletView: React.FC<WalletViewProps> = ({
 
         {deposits.length === 0 ? (
           <div className="text-center py-8 text-slate-500 text-xs">
-            No deposits found. Complete your first top-up above.
+            No deposits found. Complete your first Razorpay top-up above.
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-800 text-slate-400 uppercase tracking-wider text-[10px]">
-                  <th className="pb-3 font-semibold">Deposit ID</th>
+                  <th className="pb-3 font-semibold">Order / Deposit ID</th>
                   <th className="pb-3 font-semibold">Date & Time</th>
-                  <th className="pb-3 font-semibold">Method</th>
-                  <th className="pb-3 font-semibold">UTR / Ref No</th>
+                  <th className="pb-3 font-semibold">Gateway</th>
+                  <th className="pb-3 font-semibold">Payment ID</th>
                   <th className="pb-3 font-semibold text-right">Amount</th>
-                  <th className="pb-3 font-semibold text-right">Bonus</th>
                   <th className="pb-3 font-semibold text-right">Credited</th>
                   <th className="pb-3 font-semibold text-center">Status</th>
                 </tr>
@@ -924,7 +570,7 @@ export const WalletView: React.FC<WalletViewProps> = ({
               <tbody className="divide-y divide-slate-800/60 font-mono text-slate-300">
                 {deposits.map((dep) => (
                   <tr key={dep.id} className="hover:bg-slate-800/30 transition-colors">
-                    <td className="py-3 font-bold text-orange-400">{dep.depositId}</td>
+                    <td className="py-3 font-bold text-orange-400">{dep.razorpayOrderId || dep.depositId}</td>
                     <td className="py-3 text-[11px] text-slate-400">
                       {new Date(dep.createdAt).toLocaleString('en-IN', {
                         day: 'numeric',
@@ -934,19 +580,28 @@ export const WalletView: React.FC<WalletViewProps> = ({
                       })}
                     </td>
                     <td className="py-3 font-sans text-white text-[11px]">{dep.methodTitle}</td>
-                    <td className="py-3 text-slate-400 text-[11px]">{dep.utrNumber || '—'}</td>
+                    <td className="py-3 text-slate-400 text-[11px]">{dep.razorpayPaymentId || dep.utrNumber || '—'}</td>
                     <td className="py-3 text-right text-slate-300">₹{dep.amount.toFixed(2)}</td>
-                    <td className="py-3 text-right text-emerald-400">
-                      {dep.bonus > 0 ? `+₹${dep.bonus.toFixed(2)}` : '—'}
-                    </td>
                     <td className="py-3 text-right font-bold text-white">
                       ₹{dep.totalCredited.toFixed(2)}
                     </td>
                     <td className="py-3 text-center">
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
-                        <Check className="w-2.5 h-2.5" />
-                        <span>{dep.status}</span>
-                      </span>
+                      {dep.status === 'Completed' || dep.status === 'Success' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                          <Check className="w-2.5 h-2.5" />
+                          <span>Success</span>
+                        </span>
+                      ) : dep.status === 'Failed' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/30">
+                          <AlertCircle className="w-2.5 h-2.5" />
+                          <span>Failed</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                          <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+                          <span>{dep.status}</span>
+                        </span>
+                      )}
                     </td>
                   </tr>
                 ))}

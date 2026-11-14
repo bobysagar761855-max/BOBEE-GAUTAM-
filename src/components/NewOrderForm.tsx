@@ -8,7 +8,7 @@ interface NewOrderFormProps {
   currentUser: User | null;
   onRequireLogin: () => void;
   onOrderSuccess: (order: any) => void;
-  onDeductBalance: (amount: number) => void;
+  onDeductBalance: (amount: number, exactNewBalance?: number) => void;
   onShowToast: (type: 'success' | 'error' | 'warning' | 'info', title: string, message?: string) => void;
   preselectedServiceId?: number | null;
 }
@@ -31,7 +31,6 @@ export const NewOrderForm: React.FC<NewOrderFormProps> = ({
   const [link, setLink] = useState<string>('');
   const [quantity, setQuantity] = useState<string>('1000');
   const [customComments, setCustomComments] = useState<string>('');
-  const [isLiveDispatch, setIsLiveDispatch] = useState<boolean>(true);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const commentsId = useId();
 
@@ -84,6 +83,12 @@ export const NewOrderForm: React.FC<NewOrderFormProps> = ({
   const handlePlaceOrder = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    if (!currentUser) {
+      onShowToast('warning', 'Login Required', 'Please sign in to your account before placing an order.');
+      onRequireLogin();
+      return;
+    }
+
     if (!currentService) {
       onShowToast('error', 'Service Error', 'Please select a valid service first.');
       return;
@@ -107,7 +112,7 @@ export const NewOrderForm: React.FC<NewOrderFormProps> = ({
       onShowToast(
         'error',
         'Insufficient Balance',
-        `You need ₹${totalCost.toFixed(2)} but your current reseller wallet balance is ₹${userBalance.toFixed(2)}. Please add funds.`
+        `You need ₹${totalCost.toFixed(2)} but your current wallet balance is ₹${userBalance.toFixed(2)}. Please add funds first.`
       );
       return;
     }
@@ -121,27 +126,27 @@ export const NewOrderForm: React.FC<NewOrderFormProps> = ({
         quantity: parsedQty,
         rate: currentService.rate,
         category: currentService.category,
-        serviceName: currentService.name,
-        forceSimulation: !isLiveDispatch,
-        userId: currentUser?.id || undefined,
-        userEmail: currentUser?.email || undefined
+        serviceName: currentService.name
       };
 
       if (isCustomCommentService && customComments.trim()) {
         payload.comments = customComments.trim();
       }
 
+      const token = currentUser.token || localStorage.getItem('hanuman_auth_token') || '';
       const response = await fetch('/api/order', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
         body: JSON.stringify(payload)
       });
 
       const data = await response.json();
 
       if (data.success) {
-        // Deduct from local wallet
-        onDeductBalance(totalCost);
+        onDeductBalance(totalCost, data.updatedBalance);
 
         onOrderSuccess({
           orderId: data.orderId,
@@ -151,13 +156,13 @@ export const NewOrderForm: React.FC<NewOrderFormProps> = ({
           link: link.trim(),
           quantity: parsedQty,
           charge: totalCost,
-          isLive: Boolean(data.isLive)
+          isLive: true
         });
 
         onShowToast(
           'success',
           'Order Dispatched!',
-          `Order #${data.orderId} submitted successfully. Estimated charge: ₹${totalCost.toFixed(2)}`
+          `Order #${data.orderId} submitted to HanumanSMM. Charged: ₹${totalCost.toFixed(2)}`
         );
 
         // Reset fields
@@ -167,7 +172,7 @@ export const NewOrderForm: React.FC<NewOrderFormProps> = ({
         onShowToast(
           'error',
           'Provider Declined Order',
-          data.error || 'HanumanSMM could not process this order. You can switch to Simulation Mode to test.'
+          data.error || 'HanumanSMM could not process this order. Please check your link and balance.'
         );
       }
     } catch (err: any) {
@@ -190,40 +195,12 @@ export const NewOrderForm: React.FC<NewOrderFormProps> = ({
             <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight flex items-center gap-2.5">
               <span>Place New Order</span>
               <span className="text-xs font-mono font-medium text-orange-400 bg-orange-950/60 border border-orange-800/60 px-2 py-0.5 rounded">
-                API v2
+                Live API v2
               </span>
             </h1>
             <p className="text-xs text-slate-400 mt-1">
-              Select your service, paste your destination link, and submit instantly to HanumanSMM.
+              Select your service, paste your destination link, and submit directly to HanumanSMM.
             </p>
-          </div>
-
-          {/* Mode Switcher */}
-          <div className="flex items-center gap-2 p-1 bg-slate-900 border border-slate-800 rounded-lg text-xs self-start sm:self-auto">
-            <button
-              type="button"
-              onClick={() => setIsLiveDispatch(true)}
-              className={`px-3 py-1.5 rounded-md font-semibold transition-colors flex items-center gap-1.5 ${
-                isLiveDispatch
-                  ? 'bg-orange-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <Zap className="w-3.5 h-3.5" />
-              <span>Live API</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsLiveDispatch(false)}
-              className={`px-3 py-1.5 rounded-md font-semibold transition-colors flex items-center gap-1.5 ${
-                !isLiveDispatch
-                  ? 'bg-slate-700 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <ShieldCheck className="w-3.5 h-3.5" />
-              <span>Demo Mode</span>
-            </button>
           </div>
         </div>
 
@@ -484,9 +461,7 @@ export const NewOrderForm: React.FC<NewOrderFormProps> = ({
             ) : (
               <>
                 <Send className="w-4 h-4" />
-                <span>
-                  {isLiveDispatch ? 'Submit Live Order to HanumanSMM' : 'Submit Demo Order (Local Test)'}
-                </span>
+                <span>Submit Live Order</span>
               </>
             )}
           </button>
@@ -536,7 +511,7 @@ export const NewOrderForm: React.FC<NewOrderFormProps> = ({
             POST https://hanumansmm.in/api/v2
           </div>
           <p className="text-slate-400 leading-relaxed text-[11px]">
-            Orders with <strong>Live API</strong> toggle on are dispatched directly to your upstream account. If your account runs out of funds, you can switch to <strong>Demo Mode</strong> at the top to test workflows.
+            All orders are dispatched directly to the live HanumanSMM API v2 server and deducted from your verified wallet balance.
           </p>
         </div>
 

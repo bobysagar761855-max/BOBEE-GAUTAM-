@@ -1,24 +1,46 @@
-import React, { useState } from 'react';
-import { RefreshCw, Copy, Check, ExternalLink, Search } from 'lucide-react';
-import { PlacedOrder } from '../types.ts';
+import React, { useState, useEffect } from 'react';
+import { RefreshCw, Copy, Check, ExternalLink, Search, ArrowRight, Lock, ChevronLeft, ChevronRight } from 'lucide-react';
+import { PlacedOrder, User } from '../types.ts';
+import { parseUrlState, buildOrdersUrl, updateBrowserUrl } from '../lib/searchUrl.ts';
 
 interface OrdersTrackerProps {
   orders: PlacedOrder[];
+  currentUser: User | null;
+  onRequireLogin: () => void;
   onRefreshStatus: (orderId: string | number) => Promise<void>;
   onShowToast: (type: 'success' | 'error' | 'warning' | 'info', title: string, message?: string) => void;
 }
 
+const ORDERS_PER_PAGE = 15;
+
 export const OrdersTracker: React.FC<OrdersTrackerProps> = ({
   orders,
+  currentUser,
+  onRequireLogin,
   onRefreshStatus,
   onShowToast
 }) => {
-  const [statusFilter, setStatusFilter] = useState<string>('All');
-  const [searchQuery, setSearchQuery] = useState<string>('');
+  const initialState = parseUrlState();
+  const [statusFilter, setStatusFilter] = useState<string>(initialState.status || 'All');
+  const [searchQuery, setSearchQuery] = useState<string>(initialState.query || '');
+  const [currentPage, setCurrentPage] = useState<number>(initialState.page || 1);
   const [copiedId, setCopiedId] = useState<string | number | null>(null);
   const [syncingId, setSyncingId] = useState<string | number | null>(null);
 
   const statuses = ['All', 'Pending', 'In Progress', 'Completed', 'Partial', 'Canceled'];
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const parsed = parseUrlState();
+      if (parsed.tab === 'orders') {
+        setStatusFilter(parsed.status || 'All');
+        setSearchQuery(parsed.query || '');
+        setCurrentPage(parsed.page || 1);
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   const filteredOrders = orders.filter(o => {
     const matchesStatus = statusFilter === 'All' || o.status.toLowerCase() === statusFilter.toLowerCase();
@@ -31,6 +53,25 @@ export const OrdersTracker: React.FC<OrdersTrackerProps> = ({
 
     return matchesStatus && matchesSearch;
   });
+
+  const totalPages = Math.max(1, Math.ceil(filteredOrders.length / ORDERS_PER_PAGE));
+  const safePage = Math.min(currentPage, totalPages);
+  const paginatedOrders = filteredOrders.slice((safePage - 1) * ORDERS_PER_PAGE, safePage * ORDERS_PER_PAGE);
+
+  useEffect(() => {
+    if (orders.length > 0 && currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [orders.length, currentPage, totalPages]);
+
+  useEffect(() => {
+    const nextUrl = buildOrdersUrl({
+      query: searchQuery,
+      status: statusFilter,
+      page: safePage
+    });
+    updateBrowserUrl(nextUrl, false);
+  }, [searchQuery, statusFilter, safePage]);
 
   const totalSpent = orders.reduce((sum, o) => sum + (Number(o.charge) || 0), 0);
   const completedCount = orders.filter(o => o.status.toLowerCase() === 'completed').length;
@@ -63,6 +104,32 @@ export const OrdersTracker: React.FC<OrdersTrackerProps> = ({
     if (s === 'canceled') return 'text-rose-400 bg-rose-950/60 border-rose-800/60';
     return 'text-slate-300 bg-slate-800 border-slate-700';
   };
+
+  if (!currentUser) {
+    return (
+      <div className="max-w-xl mx-auto my-8 bg-[#0f172a]/90 border border-slate-800 rounded-2xl p-8 text-center space-y-5 shadow-2xl animate-in fade-in">
+        <div className="w-14 h-14 rounded-2xl bg-orange-500/15 border border-orange-500/30 text-orange-400 flex items-center justify-center mx-auto">
+          <Lock className="w-7 h-7" />
+        </div>
+        <div className="space-y-2">
+          <h2 className="text-xl font-black text-white tracking-tight">
+            Sign In to View Your Orders
+          </h2>
+          <p className="text-xs text-slate-400 leading-relaxed max-w-md mx-auto">
+            Order history is private to each user account. Sign in or register to track your own orders and live status updates.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onRequireLogin}
+          className="px-6 py-3 bg-orange-600 hover:bg-orange-500 text-white text-xs font-extrabold uppercase tracking-wider rounded-xl shadow-lg shadow-orange-600/25 transition-all inline-flex items-center gap-2 cursor-pointer"
+        >
+          <span>Sign In / Register Account</span>
+          <ArrowRight className="w-4 h-4" />
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -114,8 +181,9 @@ export const OrdersTracker: React.FC<OrdersTrackerProps> = ({
           {statuses.map(st => (
             <button
               key={st}
-              onClick={() => setStatusFilter(st)}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap transition-colors ${
+              type="button"
+              onClick={() => { setStatusFilter(st); setCurrentPage(1); }}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap transition-colors cursor-pointer ${
                 statusFilter === st
                   ? 'bg-orange-600 text-white shadow-sm'
                   : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
@@ -132,7 +200,7 @@ export const OrdersTracker: React.FC<OrdersTrackerProps> = ({
           <input
             type="text"
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
             placeholder="Search order ID or link..."
             className="w-full bg-slate-900 border border-slate-700/80 rounded-xl pl-9 pr-4 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-orange-500 transition-colors"
           />
@@ -156,14 +224,14 @@ export const OrdersTracker: React.FC<OrdersTrackerProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/80 text-slate-300">
-              {filteredOrders.length === 0 ? (
+              {paginatedOrders.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="text-center py-12 text-slate-500">
                     No orders found matching the filter.
                   </td>
                 </tr>
               ) : (
-                filteredOrders.map(order => (
+                paginatedOrders.map(order => (
                   <tr key={order.id} className="hover:bg-slate-800/40 transition-colors">
                     
                     {/* Order ID */}
@@ -253,6 +321,33 @@ export const OrdersTracker: React.FC<OrdersTrackerProps> = ({
             </tbody>
           </table>
         </div>
+        {totalPages > 1 && (
+          <div className="px-4 py-3 bg-slate-900/80 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
+            <span>
+              Page <strong className="text-white font-mono">{safePage}</strong> of <strong className="text-white font-mono">{totalPages}</strong> ({filteredOrders.length} orders)
+            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={safePage <= 1}
+                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 flex items-center gap-1 cursor-pointer disabled:cursor-not-allowed"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+                <span>Prev</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                disabled={safePage >= totalPages}
+                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 flex items-center gap-1 cursor-pointer disabled:cursor-not-allowed"
+              >
+                <span>Next</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
     </div>

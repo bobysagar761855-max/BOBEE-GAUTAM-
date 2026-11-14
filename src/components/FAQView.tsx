@@ -1,8 +1,9 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   HelpCircle, Search, ChevronDown, PackageCheck, RefreshCcw,
   Code2, Wallet, Send, ArrowRight, ShieldCheck
 } from 'lucide-react';
+import { parseUrlState, buildFaqUrl, updateBrowserUrl } from '../lib/searchUrl.ts';
 
 interface FAQItem {
   id: string;
@@ -100,25 +101,53 @@ const FAQ_DATA: FAQItem[] = [
   {
     id: 'pay-1',
     category: 'Payments',
-    question: 'How long does Paytm UPI QR verification take?',
+    question: 'How long does Razorpay payment verification take?',
     answer:
-      'Paytm UPI QR deposits to bobeegautam1@ptaxis are verified instantly once you submit the 12-digit UTR / Transaction Reference Number on the Add Funds page. Deposits of ₹1,000+ also receive an automatic 3%–5% bonus.',
+      'All Razorpay deposits (₹10 – ₹10,000) are verified automatically via cryptographic HMAC signature check as soon as you complete checkout, and your wallet balance updates immediately.',
   },
   {
     id: 'pay-2',
     category: 'Payments',
-    question: 'My UPI payment was deducted, but my wallet balance did not update. What should I do?',
+    question: 'My payment was deducted, but my wallet balance did not update. What should I do?',
     answer:
-      'Double-check that you entered the exact 12-digit UTR number from your payment receipt on the Add Funds page. If it still does not credit within 2 minutes, message our Telegram Help Team with your UTR screenshot.',
+      'Check the Recent Deposits & Transactions table on the Add Funds page for your Order / Payment ID status. If it still does not reflect within 2 minutes, message our Telegram Help Team with your Razorpay Payment ID.',
   }
 ];
 
 const CATEGORIES = ['All', 'Order Processing', 'Refund Policies', 'API Usage', 'Payments'] as const;
 
 export const FAQView: React.FC<FAQViewProps> = ({ onNavigateToTab }) => {
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<(typeof CATEGORIES)[number]>('All');
+  const initialState = parseUrlState();
+  const initialCategory = (CATEGORIES as readonly string[]).includes(initialState.category)
+    ? (initialState.category as (typeof CATEGORIES)[number])
+    : 'All';
+
+  const [searchQuery, setSearchQuery] = useState(initialState.query || '');
+  const [selectedCategory, setSelectedCategory] = useState<(typeof CATEGORIES)[number]>(initialCategory);
   const [openId, setOpenId] = useState<string | null>('order-1');
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const parsed = parseUrlState();
+      if (parsed.tab === 'faq') {
+        setSearchQuery(parsed.query || '');
+        const cat = (CATEGORIES as readonly string[]).includes(parsed.category)
+          ? (parsed.category as (typeof CATEGORIES)[number])
+          : 'All';
+        setSelectedCategory(cat);
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  useEffect(() => {
+    const nextUrl = buildFaqUrl({
+      query: searchQuery,
+      category: selectedCategory
+    });
+    updateBrowserUrl(nextUrl, false);
+  }, [searchQuery, selectedCategory]);
 
   const filteredFaqs = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();

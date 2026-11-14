@@ -37,14 +37,20 @@ export interface ToastMessage {
 
 export interface User {
   id: string;
+  googleUid?: string;
   username: string;
   name: string;
   email: string;
+  photoUrl?: string;
+  photoURL?: string;
   role: 'admin' | 'reseller' | 'client';
   balance: number;
   apiKey: string;
   token?: string;
   phone?: string;
+  referralCode?: string;
+  referredBy?: string;
+  referralEarnings?: number;
   createdAt: string;
 }
 
@@ -59,7 +65,9 @@ export interface DepositRecord {
   method: string;
   methodTitle: string;
   utrNumber?: string;
-  status: 'Completed' | 'Pending' | 'Verifying';
+  razorpayOrderId?: string;
+  razorpayPaymentId?: string;
+  status: 'Completed' | 'Pending' | 'Verifying' | 'Success' | 'Failed';
   createdAt: string;
 }
 

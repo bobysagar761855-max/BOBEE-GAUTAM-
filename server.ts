@@ -1,9 +1,16 @@
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
+import Razorpay from 'razorpay';
+import {
+  dbSaveUser,
+  dbCreateTransaction,
+  dbUpdateTransaction,
+  dbCreateOrder
+} from './src/lib/firestoreDb.ts';
 
 dotenv.config();
 
@@ -12,20 +19,64 @@ const PORT = parseInt(process.env.PORT || '3000', 10);
 
 app.use(express.json());
 
+// Razorpay Instance Initialization
+const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || '';
+const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || '';
+
+let razorpayInstance: Razorpay | null = null;
+if (RAZORPAY_KEY_ID && RAZORPAY_KEY_SECRET) {
+  try {
+    razorpayInstance = new Razorpay({
+      key_id: RAZORPAY_KEY_ID,
+      key_secret: RAZORPAY_KEY_SECRET
+    });
+    console.log('✅ Razorpay SDK initialized successfully with key_id:', RAZORPAY_KEY_ID.slice(0, 8) + '...');
+  } catch (err) {
+    console.error('❌ Failed to initialize Razorpay SDK:', err);
+  }
+} else {
+  console.log('⚠️ Razorpay credentials not fully set in environment (RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET). Live payments will require setting these env variables.');
+}
+
+// Security & Anti-Cache Headers for all API responses (prevents browser Back/Refresh session caching)
+function setNoCacheHeaders(res: Response) {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, private');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Surrogate-Control', 'no-store');
+}
+
+app.use('/api', (_req: Request, res: Response, next: NextFunction) => {
+  setNoCacheHeaders(res);
+  next();
+});
+
 // Hanuman SMM Provider Configuration
 let HANUMAN_API_URL = process.env.HANUMAN_API_URL || 'https://hanumansmm.in/api/v2';
 let HANUMAN_API_KEY = process.env.HANUMAN_API_KEY || '2058d47f3d4169e18b08bfbd5bcdaba83eae0da6';
 
+// Firebase OAuth Config for Google ID Token Verification
+let FIREBASE_API_KEY = '';
+try {
+  const fbConfigPath = path.join(process.cwd(), 'firebase-applet-config.json');
+  if (fs.existsSync(fbConfigPath)) {
+    const fbConfig = JSON.parse(fs.readFileSync(fbConfigPath, 'utf-8'));
+    FIREBASE_API_KEY = fbConfig.apiKey || '';
+  }
+} catch (err) {
+  console.error('Failed loading firebase-applet-config.json:', err);
+}
+
 // Curated 26 Initial Services provided by user
 const initialServices = [
-  { id: 4281, platform: 'Instagram', name: 'Instagram Real Indian Likes [🔝🇮🇳 Premium + ]100k/day [0-30min] R30', rate: 113.00, min: 100, max: 100000, category: 'Instagram Likes', desc: 'Top Premium Quality | 100% Indian | Non Drop Server' },
-  { id: 2973, platform: 'Instagram', name: '🇮🇳 Instagram Indian Likes [HQ Profiles] [Cancel Enabled] [R30] [100k/day 🚀]', rate: 6.24, min: 100, max: 100000, category: 'Instagram Likes', desc: 'High Quality Profiles with cancel enabled button' },
+  { id: 4281, platform: 'Instagram', name: 'Instagram Real Indian Likes [🔝🇮🇳 Premium + ]100k/day [0-30min] R30', rate: 45.00, min: 100, max: 100000, category: 'Instagram Likes', desc: 'Top Premium Quality | 100% Indian | Non Drop Server' },
+  { id: 2973, platform: 'Instagram', name: '🇮🇳 Instagram Indian Likes [HQ Profiles] [Cancel Enabled] [R30] [100k/day 🚀]', rate: 10.00, min: 100, max: 100000, category: 'Instagram Likes', desc: 'High Quality Profiles with cancel enabled button' },
   { id: 6085, platform: 'Instagram', name: 'Instagram Random Comments [Non Drop] [10k/day] [English]', rate: 37.44, min: 10, max: 10000, category: 'Instagram Comments', desc: 'Non drop random comments' },
   { id: 6472, platform: 'Instagram', name: 'Instagram Positive Emoji Comments [Non Drop] [20k/day] [Good Speed]', rate: 39.36, min: 10, max: 20000, category: 'Instagram Comments', desc: 'Positive Emoji comments 🥰👍❤️🥳🤩' },
   { id: 6087, platform: 'Instagram', name: 'Instagram Custom Comments [Non Drop] [10k/day] [Cheapest]', rate: 40.32, min: 10, max: 10000, category: 'Instagram Comments', desc: 'Custom comments low rate' },
-  { id: 7530, platform: 'Instagram', name: 'Instagram Followers R365 [Cancel Enable] [Instant start] [Quality: 6+post] 100k/day🚀', rate: 260.00, min: 100, max: 100000, category: 'Instagram Followers', desc: 'Slow Drop | Unlimited Button Refill | 10-20% Drop' },
-  { id: 7637, platform: 'Instagram', name: 'Instagram Video Views with Viewers [Instant | 10M/day🚀 | IGTV+Post | Premium]', rate: 1.82, min: 500, max: 10000000, category: 'Instagram Views', desc: 'Superfast IG Video Views' },
-  { id: 7551, platform: 'Instagram', name: 'Instagram Followers [Max 50k | HQ | Low Drop | Instant Start | ♻️365 Days | 100k/day🔥]', rate: 173.92, min: 100, max: 50000, category: 'Instagram Followers', desc: 'Suggested HQ low drop service' },
+  { id: 7530, platform: 'Instagram', name: 'Instagram Followers R365 [Cancel Enable] [Instant start] [Quality: 6+post] 100k/day🚀', rate: 95.00, min: 100, max: 100000, category: 'Instagram Followers', desc: 'Slow Drop | Unlimited Button Refill | 10-20% Drop' },
+  { id: 7637, platform: 'Instagram', name: 'Instagram Video Views with Viewers [Instant | 10M/day🚀 | IGTV+Post | Premium]', rate: 5.00, min: 500, max: 10000000, category: 'Instagram Views', desc: 'Superfast IG Video & Reels Views' },
+  { id: 7551, platform: 'Instagram', name: 'Instagram Followers [Max 50k | HQ | Low Drop | Instant Start | ♻️365 Days | 100k/day🔥]', rate: 75.00, min: 100, max: 50000, category: 'Instagram Followers', desc: 'Suggested HQ low drop service' },
   { id: 6230, platform: 'YouTube', name: 'YouTube Comment Likes [No Refill] [Max 50K] [Instant Start] [FAST]', rate: 20.16, min: 100, max: 50000, category: 'YouTube Likes', desc: 'Fast comment likes' },
   { id: 4073, platform: 'YouTube', name: 'YouTube Likes [Instant] [30 Days Refill] [100K Max] [50k/day]', rate: 22.08, min: 100, max: 100000, category: 'YouTube Likes', desc: '30 Days Refill enabled' },
   { id: 7652, platform: 'YouTube', name: 'YouTube Video Views [100k/day] [Bot Views] [Instant Start]', rate: 25.92, min: 1000, max: 1000000, category: 'YouTube Views', desc: 'Instant bot views' },
@@ -40,7 +91,9 @@ const initialServices = [
   { id: 6194, platform: 'YouTube', name: 'YouTube Custom Comments [Instant] [10k+/day] [Cheapest]', rate: 149.76, min: 10, max: 10000, category: 'YouTube Comments', desc: 'Cheapest custom comments' },
   { id: 6210, platform: 'YouTube', name: 'YouTube Watch Time [60-Min Duration Video] [1000 = 1000 Hrs] [Best Service] [R30]', rate: 1866.24, min: 1000, max: 4000, category: 'YouTube Watch Time', desc: '1000 quantity = 1000 Hours (60 Min video required)' },
   { id: 1342, platform: 'TikTok', name: 'TikTok Video Views | Stable Views [Best Seller | No Drops Since 1 Year] [1M/day 🚀]', rate: 5.09, min: 1000, max: 10000000, category: 'TikTok Views', desc: 'Stable Views No Drop 1 Year' },
-  { id: 7610, platform: 'Facebook', name: 'Facebook Profile/Page Followers [High Quality] [Less Drop] [50k/day] NR [0–3hr]', rate: 10.56, min: 100, max: 50000, category: 'Facebook Followers', desc: 'High Quality less drop' },
+  { id: 7610, platform: 'Facebook', name: 'Facebook Profile/Page Followers [High Quality] [Less Drop] [50k/day] NR [0–3hr]', rate: 35.00, min: 100, max: 50000, category: 'Facebook Followers', desc: 'High Quality less drop' },
+  { id: 7611, platform: 'Facebook', name: 'Facebook Post/Photo Likes [Instant Start] [Non Drop] [50k/day]', rate: 15.00, min: 100, max: 50000, category: 'Facebook Likes', desc: 'Instant Facebook post & photo likes' },
+  { id: 7612, platform: 'Facebook', name: 'Facebook Video/Reels Views [Instant | 100k/day | High Retention]', rate: 8.00, min: 500, max: 1000000, category: 'Facebook Views', desc: 'Fast Facebook video and reels views' },
   { id: 7553, platform: 'TikTok', name: 'TikTok Likes [Fast] Real Accounts [Cancel Button] [30k/day] [0–1min] [Europe + Brazil]', rate: 32.64, min: 100, max: 30000, category: 'TikTok Likes', desc: 'Real accounts fast start' },
   { id: 4620, platform: 'Instagram', name: 'Instagram Channel Members | Max 100K | Real & Active Users | Less Drop | 10K/day', rate: 120.00, min: 100, max: 100000, category: 'Instagram Members', desc: 'Real and active broadcast channel members' },
   { id: 6353, platform: 'Other', name: 'LinkedIn Company/Page Followers | Max 5K | NR | Daily 1K–3K', rate: 437.76, min: 100, max: 5000, category: 'LinkedIn', desc: 'Company page followers' }
@@ -62,15 +115,19 @@ export interface DepositRecord {
   method: string;
   methodTitle: string;
   utrNumber?: string;
-  status: 'Completed' | 'Pending' | 'Verifying';
+  razorpayOrderId?: string;
+  razorpayPaymentId?: string;
+  status: 'Completed' | 'Pending' | 'Verifying' | 'Success' | 'Failed';
   createdAt: string;
 }
 
 export interface UserRecord {
   id: string;
+  googleUid?: string;
   username: string;
   name: string;
   email: string;
+  photoUrl?: string;
   passwordHash?: string;
   salt?: string;
   password?: string;
@@ -79,6 +136,9 @@ export interface UserRecord {
   apiKey: string;
   token?: string;
   phone?: string;
+  referralCode?: string;
+  referredBy?: string;
+  referralEarnings?: number;
   createdAt: string;
 }
 
@@ -185,7 +245,7 @@ function loadUsers(): UserRecord[] {
     if (fs.existsSync(USERS_FILE)) {
       const data = fs.readFileSync(USERS_FILE, 'utf-8');
       const loaded: UserRecord[] = JSON.parse(data);
-      // Ensure existing users have username and hash
+      // Ensure existing users have username, hash, referralCode, and no leftover fake 999999 balance
       let modified = false;
       loaded.forEach(u => {
         if (!u.username) {
@@ -196,6 +256,18 @@ function loadUsers(): UserRecord[] {
           u.salt = crypto.randomBytes(16).toString('hex');
           u.passwordHash = hashPassword(u.password, u.salt);
           delete u.password;
+          modified = true;
+        }
+        if (typeof u.balance !== 'number' || Number.isNaN(u.balance) || u.balance >= 999999) {
+          u.balance = 0.00;
+          modified = true;
+        }
+        if (!u.referralCode) {
+          u.referralCode = `BOBY${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+          modified = true;
+        }
+        if (typeof u.referralEarnings !== 'number') {
+          u.referralEarnings = 0;
           modified = true;
         }
       });
@@ -470,12 +542,10 @@ app.get('/api/balance', async (_req: Request, res: Response) => {
       status: 'auth_error'
     });
   } catch (err: any) {
-    // Graceful offline fallback
-    return res.json({
+    return res.status(502).json({
       success: false,
-      balance: '1420.50',
+      balance: '0.00',
       currency: 'INR',
-      isFallback: true,
       error: err.message || 'Provider connection timeout',
       status: 'offline_cached'
     });
@@ -500,19 +570,33 @@ app.get('/api/services', async (req: Request, res: Response) => {
   try {
     const liveServices = await callHanumanAPI({ action: 'services' }, 20000);
     if (Array.isArray(liveServices) && liveServices.length > 0) {
-      // Map live services to standard format
-      const formatted = liveServices.map((s: any) => ({
-        id: Number(s.service || s.id),
-        platform: determinePlatform(s.name, s.category),
-        name: s.name,
-        rate: parseFloat(s.rate || '0'),
-        min: parseInt(s.min || '10', 10),
-        max: parseInt(s.max || '100000', 10),
-        category: s.category || 'General',
-        desc: s.desc || s.type || 'Standard High Speed SMM Service',
-        refill: Boolean(s.refill),
-        cancel: Boolean(s.cancel)
-      }));
+      const panelRateOverrides: Record<number, number> = {
+        7551: 75.00, // IG Followers 1K - ₹75
+        7530: 95.00,
+        2973: 10.00, // IG Likes 1K - ₹10
+        4281: 45.00,
+        7637: 5.00,  // IG Views 1K - ₹5
+        7610: 35.00, // FB Followers 1K - ₹35
+        7611: 15.00, // FB Likes 1K - ₹15
+        7612: 8.00   // FB Views 1K - ₹8
+      };
+
+      // Map live services to standard format with custom panel pricing
+      const formatted = liveServices.map((s: any) => {
+        const sid = Number(s.service || s.id);
+        return {
+          id: sid,
+          platform: determinePlatform(s.name, s.category),
+          name: s.name,
+          rate: panelRateOverrides[sid] ?? parseFloat(s.rate || '0'),
+          min: parseInt(s.min || '10', 10),
+          max: parseInt(s.max || '100000', 10),
+          category: s.category || 'General',
+          desc: s.desc || s.type || 'Standard High Speed SMM Service',
+          refill: Boolean(s.refill),
+          cancel: Boolean(s.cancel)
+        };
+      });
 
       cachedLiveServices = formatted;
       cachedServicesAt = now;
@@ -559,9 +643,107 @@ function determinePlatform(name: string = '', category: string = ''): string {
   return 'Other';
 }
 
-// 3. Place Order Endpoint
-app.post('/api/order', async (req: Request, res: Response) => {
-  const { service, link, quantity, comments, rate, category, serviceName, forceSimulation, userId, userEmail } = req.body;
+// Session Authentication Helper & Middleware
+interface AuthenticatedRequest extends Request {
+  authUser?: UserRecord;
+}
+
+function extractSessionToken(req: Request): string | null {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    return authHeader.slice(7).trim();
+  }
+  const headerToken = req.headers['x-auth-token'];
+  if (typeof headerToken === 'string' && headerToken.trim()) {
+    return headerToken.trim();
+  }
+  if (typeof req.query.token === 'string' && req.query.token.trim()) {
+    return req.query.token.trim();
+  }
+  return null;
+}
+
+// Verify Firebase / Google ID Token via Google Identity Toolkit
+async function verifyFirebaseIdToken(idToken: string): Promise<{
+  uid: string;
+  email: string;
+  name: string;
+  photoUrl?: string;
+}> {
+  if (!FIREBASE_API_KEY) {
+    throw new Error('Firebase API key not configured on server.');
+  }
+  const resp = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(FIREBASE_API_KEY)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idToken })
+    }
+  );
+  const data = await resp.json();
+  if (!resp.ok || !Array.isArray(data.users) || data.users.length === 0) {
+    throw new Error(data?.error?.message || 'Invalid or expired Google authentication token.');
+  }
+  const fbUser = data.users[0];
+  if (!fbUser.localId || !fbUser.email) {
+    throw new Error('Google account did not return a verified UID and email.');
+  }
+  return {
+    uid: String(fbUser.localId),
+    email: String(fbUser.email).toLowerCase(),
+    name: String(fbUser.displayName || fbUser.email.split('@')[0]),
+    photoUrl: fbUser.photoUrl ? String(fbUser.photoUrl) : undefined
+  };
+}
+
+// Cache verified user Firebase ID tokens in memory for Firestore REST persistence
+const userFirebaseTokens = new Map<string, string>();
+
+async function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  const token = extractSessionToken(req);
+  if (!token) {
+    return res.status(401).json({
+      success: false,
+      error: 'Authentication required. Please Sign in with Google to continue.'
+    });
+  }
+
+  let user = storedUsers.find(u => u.token && u.token === token);
+
+  // Also support direct Firebase ID token verification bound to Google UID
+  if (!user && token.includes('.')) {
+    try {
+      const verified = await verifyFirebaseIdToken(token);
+      user = storedUsers.find(u => u.googleUid && u.googleUid === verified.uid);
+      if (user) {
+        userFirebaseTokens.set(user.id, token);
+      }
+    } catch {
+      // Invalid ID token
+    }
+  }
+
+  if (!user) {
+    return res.status(401).json({
+      success: false,
+      error: 'Session expired or invalid. Please Sign in with Google again.'
+    });
+  }
+
+  const headerFbToken = req.headers['x-firebase-token'];
+  if (typeof headerFbToken === 'string' && headerFbToken.includes('.')) {
+    userFirebaseTokens.set(user.id, headerFbToken.trim());
+  }
+
+  req.authUser = user;
+  next();
+}
+
+// 3. Place Live Order Endpoint (Strictly scoped to logged-in session user with real balance deduction)
+app.post('/api/order', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const { service, link, quantity, comments, rate, category, serviceName } = req.body;
+  const matchedUser = req.authUser!;
 
   if (!service || !link || !quantity) {
     return res.status(400).json({ success: false, error: 'Missing service, link, or quantity' });
@@ -571,50 +753,14 @@ app.post('/api/order', async (req: Request, res: Response) => {
   const numericRate = parseFloat(rate || '0');
   const estimatedCharge = (numericQty * numericRate) / 1000;
 
-  // Deduct from user account if specified
-  let matchedUser = userId ? storedUsers.find(u => u.id === userId) : null;
-  if (matchedUser && matchedUser.balance < estimatedCharge) {
-    return res.status(400).json({
-      success: false,
-      error: `Insufficient user balance. Required: ₹${estimatedCharge.toFixed(2)}, Available: ₹${matchedUser.balance.toFixed(2)}`
-    });
+  if (numericQty <= 0 || Number.isNaN(numericQty)) {
+    return res.status(400).json({ success: false, error: 'Invalid order quantity.' });
   }
 
-  // If user requests simulation or offline fallback
-  if (forceSimulation) {
-    const mockId = Math.floor(100000 + Math.random() * 900000);
-    const newOrder: OrderRecord = {
-      id: Date.now(),
-      orderId: `SIM-${mockId}`,
-      userId: userId || undefined,
-      userEmail: userEmail || matchedUser?.email || undefined,
-      serviceId: Number(service),
-      serviceName: serviceName || `Service #${service}`,
-      category: category || 'General',
-      link,
-      quantity: numericQty,
-      charge: estimatedCharge,
-      status: 'In Progress',
-      startCount: 0,
-      remains: numericQty,
-      isLive: false,
-      createdAt: new Date().toISOString()
-    };
-
-    if (matchedUser) {
-      matchedUser.balance = Math.max(0, matchedUser.balance - estimatedCharge);
-      saveUsers(storedUsers);
-    }
-
-    storedOrders.unshift(newOrder);
-    saveOrders(storedOrders);
-
-    return res.json({
-      success: true,
-      orderId: newOrder.orderId,
-      isSimulation: true,
-      updatedBalance: matchedUser ? matchedUser.balance : undefined,
-      message: 'Demo order recorded successfully in local order ledger'
+  if (matchedUser.balance < estimatedCharge) {
+    return res.status(400).json({
+      success: false,
+      error: `Insufficient wallet balance. Required: ₹${estimatedCharge.toFixed(2)}, Available: ₹${matchedUser.balance.toFixed(2)}. Please add funds first.`
     });
   }
 
@@ -632,11 +778,14 @@ app.post('/api/order', async (req: Request, res: Response) => {
     const providerResp = await callHanumanAPI(payload);
 
     if (providerResp && providerResp.order) {
+      matchedUser.balance = Math.max(0, Number((matchedUser.balance - estimatedCharge).toFixed(2)));
+      saveUsers(storedUsers);
+
       const realOrder: OrderRecord = {
         id: Date.now(),
         orderId: providerResp.order,
-        userId: userId || undefined,
-        userEmail: userEmail || matchedUser?.email || undefined,
+        userId: matchedUser.id,
+        userEmail: matchedUser.email,
         serviceId: Number(service),
         serviceName: serviceName || `Service #${service}`,
         category: category || 'General',
@@ -650,19 +799,51 @@ app.post('/api/order', async (req: Request, res: Response) => {
         createdAt: new Date().toISOString()
       };
 
-      if (matchedUser) {
-        matchedUser.balance = Math.max(0, matchedUser.balance - estimatedCharge);
-        saveUsers(storedUsers);
-      }
-
       storedOrders.unshift(realOrder);
       saveOrders(storedOrders);
+
+      const fbToken = userFirebaseTokens.get(matchedUser.id);
+
+      // Persist to database
+      dbCreateOrder({
+        id: realOrder.id,
+        user_id: matchedUser.id,
+        orderId: String(realOrder.orderId),
+        service_id: realOrder.serviceId,
+        serviceName: realOrder.serviceName,
+        category: realOrder.category,
+        link: realOrder.link,
+        quantity: realOrder.quantity,
+        charge: realOrder.charge,
+        status: 'Pending',
+        provider_order_id: String(providerResp.order),
+        startCount: 0,
+        remains: realOrder.remains,
+        isLive: true,
+        created_at: realOrder.createdAt
+      }, fbToken).catch(e => console.error('[DB] Failed saving order to database:', e));
+
+      dbSaveUser({
+        id: matchedUser.id,
+        google_id: matchedUser.googleUid,
+        email: matchedUser.email,
+        wallet_balance: matchedUser.balance,
+        role: matchedUser.role === 'admin' ? 'admin' : 'user',
+        username: matchedUser.username,
+        name: matchedUser.name,
+        photoUrl: matchedUser.photoUrl,
+        token: matchedUser.token,
+        referralCode: matchedUser.referralCode,
+        referredBy: matchedUser.referredBy,
+        referralEarnings: matchedUser.referralEarnings,
+        created_at: matchedUser.createdAt
+      }, fbToken).catch(e => console.error('[DB] Failed syncing deducted balance to database:', e));
 
       return res.json({
         success: true,
         orderId: providerResp.order,
         isLive: true,
-        updatedBalance: matchedUser ? matchedUser.balance : undefined,
+        updatedBalance: matchedUser.balance,
         message: 'Order successfully dispatched to HanumanSMM!'
       });
     }
@@ -671,8 +852,7 @@ app.post('/api/order', async (req: Request, res: Response) => {
     if (providerResp && providerResp.error) {
       return res.status(400).json({
         success: false,
-        error: providerResp.error,
-        canSimulate: true
+        error: providerResp.error
       });
     }
 
@@ -680,27 +860,14 @@ app.post('/api/order', async (req: Request, res: Response) => {
   } catch (err: any) {
     return res.status(502).json({
       success: false,
-      error: err.message || 'Failed to dispatch order to upstream provider',
-      canSimulate: true
+      error: err.message || 'Failed to dispatch order to upstream provider'
     });
   }
 });
 
-// 4. Order Status Endpoint
+// 4. Live Order Status Endpoint
 app.get('/api/status/:orderId', async (req: Request, res: Response) => {
   const { orderId } = req.params;
-
-  // If it's a simulated order
-  if (orderId.startsWith('SIM-') || orderId.startsWith('HN-')) {
-    const found = storedOrders.find(o => String(o.orderId) === String(orderId));
-    return res.json({
-      status: found ? found.status : 'In Progress',
-      charge: found ? found.charge.toFixed(2) : '0.00',
-      start_count: found ? String(found.startCount) : '150',
-      remains: found ? String(found.remains) : '0',
-      currency: 'INR'
-    });
-  }
 
   try {
     const data = await callHanumanAPI({ action: 'status', order: orderId });
@@ -721,163 +888,127 @@ app.get('/api/status/:orderId', async (req: Request, res: Response) => {
   }
 });
 
-// 5. Orders List Endpoint (User-scoped or admin)
-app.get('/api/orders', (req: Request, res: Response) => {
-  const { userId } = req.query;
-  if (userId) {
-    const user = storedUsers.find(u => u.id === String(userId));
-    if (user && user.role !== 'admin') {
-      const userOrders = storedOrders.filter(o => o.userId === userId);
-      return res.json({ success: true, orders: userOrders });
-    }
-  }
+// 5. Orders List Endpoint (Strictly scoped to logged-in user: WHERE user_id = req.authUser.id)
+app.get('/api/orders', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const loggedInUser = req.authUser!;
+  const userOrders = storedOrders.filter(o => o.userId === loggedInUser.id);
   res.json({
     success: true,
-    orders: storedOrders
+    orders: userOrders
   });
 });
 
-// 6. Secure User Authentication Routes
-app.post('/api/auth/register', (req: Request, res: Response) => {
-  const { username, email, password, name, phone } = req.body;
+// 6. Secure Google OAuth 2.0 Authentication Routes
+app.post('/api/auth/google', async (req: Request, res: Response) => {
+  const authHeader = req.headers.authorization;
+  const idToken = (authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : null) || req.body?.idToken;
 
-  if (!username || !email || !password) {
+  if (!idToken) {
     return res.status(400).json({
       success: false,
-      error: 'Username, email, and password are all required fields.'
+      error: 'Google ID token is required.'
     });
   }
 
-  const cleanUsername = String(username).trim().toLowerCase();
-  const cleanEmail = String(email).trim().toLowerCase();
-  const cleanPassword = String(password);
+  try {
+    const verified = await verifyFirebaseIdToken(String(idToken));
 
-  // Validate username format: 3-20 characters, alphanumeric & underscore only
-  const usernameRegex = /^[a-zA-Z0-9_]{3,20}$/;
-  if (!usernameRegex.test(cleanUsername)) {
-    return res.status(400).json({
-      success: false,
-      error: 'Username must be between 3 and 20 characters and contain only letters, numbers, or underscores.'
+    // Strictly match user by their unique Google UID (never allow cross-account takeover)
+    let user = storedUsers.find(u => u.googleUid && u.googleUid === verified.uid);
+    let isNewUser = false;
+
+    const sessionToken = `hn_sess_${crypto.randomBytes(24).toString('hex')}`;
+
+    if (!user) {
+      isNewUser = true;
+      const baseUsername = verified.email.split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 14) || 'user';
+      const uniqueSuffix = verified.uid.slice(-4).toLowerCase();
+      const username = `${baseUsername}_${uniqueSuffix}`;
+      const incomingRef = String(req.body?.referralCode || '').trim().toUpperCase();
+      const referrer = incomingRef
+        ? storedUsers.find(u => u.referralCode && u.referralCode.toUpperCase() === incomingRef)
+        : undefined;
+
+      user = {
+        id: `usr-${verified.uid}`,
+        googleUid: verified.uid,
+        username,
+        name: verified.name,
+        email: verified.email,
+        photoUrl: verified.photoUrl,
+        role: 'client',
+        balance: 0.00, // Real wallet starts at ₹0.00
+        apiKey: `hn_user_${crypto.randomBytes(8).toString('hex')}`,
+        token: sessionToken,
+        referralCode: `BOBY${crypto.randomBytes(3).toString('hex').toUpperCase()}`,
+        referredBy: referrer?.id,
+        referralEarnings: 0,
+        createdAt: new Date().toISOString()
+      };
+
+      storedUsers.push(user);
+    } else {
+      user.name = verified.name || user.name;
+      user.email = verified.email;
+      if (verified.photoUrl) user.photoUrl = verified.photoUrl;
+      if (!user.referralCode) {
+        user.referralCode = `BOBY${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+      }
+      if (typeof user.referralEarnings !== 'number') {
+        user.referralEarnings = 0;
+      }
+      user.token = sessionToken;
+    }
+
+    saveUsers(storedUsers);
+    userFirebaseTokens.set(user.id, String(idToken));
+
+    dbSaveUser({
+      id: user.id,
+      google_id: user.googleUid,
+      email: user.email,
+      wallet_balance: user.balance,
+      role: user.role === 'admin' ? 'admin' : 'user',
+      username: user.username,
+      name: user.name,
+      photoUrl: user.photoUrl,
+      token: user.token,
+      referralCode: user.referralCode,
+      referredBy: user.referredBy,
+      referralEarnings: user.referralEarnings,
+      created_at: user.createdAt
+    }, String(idToken)).catch(e => console.error('[DB] Failed saving user to database:', e));
+
+    const { passwordHash: _h, salt: _s, password: _p, ...safeUser } = user;
+    return res.json({
+      success: true,
+      isNewUser,
+      user: safeUser,
+      token: sessionToken,
+      message: isNewUser
+        ? 'Account created with ₹0.00 balance. Please add funds to place orders.'
+        : `Welcome back, ${safeUser.name}!`
     });
-  }
-
-  // Validate email format
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailRegex.test(cleanEmail)) {
-    return res.status(400).json({
-      success: false,
-      error: 'Please provide a valid email address.'
-    });
-  }
-
-  // Validate password complexity: minimum 8 characters
-  if (cleanPassword.length < 8) {
-    return res.status(400).json({
-      success: false,
-      error: 'Password must be at least 8 characters long.'
-    });
-  }
-
-  // Check username uniqueness
-  const existingUsername = storedUsers.find(u => u.username && u.username.toLowerCase() === cleanUsername);
-  if (existingUsername) {
-    return res.status(409).json({
-      success: false,
-      error: 'This username is already taken. Please choose another username.'
-    });
-  }
-
-  // Check email uniqueness
-  const existingEmail = storedUsers.find(u => u.email.toLowerCase() === cleanEmail);
-  if (existingEmail) {
-    return res.status(409).json({
-      success: false,
-      error: 'An account with this email address already exists. Please log in.'
-    });
-  }
-
-  // Cryptographic Salt & Hash
-  const salt = crypto.randomBytes(16).toString('hex');
-  const passwordHash = hashPassword(cleanPassword, salt);
-  const token = `hn_sess_${crypto.randomBytes(24).toString('hex')}`;
-
-  const newUser: UserRecord = {
-    id: `usr-${Date.now()}`,
-    username: cleanUsername,
-    name: (name && String(name).trim()) || cleanUsername,
-    email: cleanEmail,
-    passwordHash,
-    salt,
-    role: 'client',
-    balance: 500.00, // Welcome signup bonus credit
-    apiKey: `hn_user_${crypto.randomBytes(8).toString('hex')}`,
-    token,
-    phone: phone ? String(phone).trim() : undefined,
-    createdAt: new Date().toISOString()
-  };
-
-  storedUsers.push(newUser);
-  saveUsers(storedUsers);
-
-  const { passwordHash: _h, salt: _s, password: _p, ...safeUser } = newUser;
-  return res.json({
-    success: true,
-    user: safeUser,
-    token,
-    message: 'Account registered successfully! ₹500 welcome credit added to your wallet.'
-  });
-});
-
-app.post('/api/auth/login', (req: Request, res: Response) => {
-  const { identifier, email, username, password } = req.body;
-  const loginId = String(identifier || username || email || '').trim().toLowerCase();
-  const rawPassword = String(password || '');
-
-  if (!loginId || !rawPassword) {
-    return res.status(400).json({
-      success: false,
-      error: 'Username or Email, and Password are required.'
-    });
-  }
-
-  // Rate limiting check
-  const rateLimitKey = `${req.ip || 'local'}_${loginId}`;
-  const rateCheck = checkRateLimit(rateLimitKey);
-  if (!rateCheck.allowed) {
-    return res.status(429).json({
-      success: false,
-      error: `Too many failed login attempts. Please wait ${rateCheck.waitSeconds} seconds before trying again.`
-    });
-  }
-
-  // Match user by username OR email
-  const user = storedUsers.find(u =>
-    (u.username && u.username.toLowerCase() === loginId) ||
-    (u.email && u.email.toLowerCase() === loginId)
-  );
-
-  if (!user || !verifyPassword(rawPassword, user)) {
-    recordFailedAttempt(rateLimitKey);
+  } catch (err: any) {
     return res.status(401).json({
       success: false,
-      error: 'Invalid credentials. Please check your username/email and password.'
+      error: err?.message || 'Google authentication verification failed.'
     });
   }
+});
 
-  // Success: clear failed attempts
-  clearFailedAttempts(rateLimitKey);
+// Manual email/password signup & login are disabled
+app.post('/api/auth/register', (_req: Request, res: Response) => {
+  return res.status(403).json({
+    success: false,
+    error: 'Manual email/password registration is disabled. Please use Sign in with Google.'
+  });
+});
 
-  // Generate fresh authenticated session token
-  const token = `hn_sess_${crypto.randomBytes(24).toString('hex')}`;
-  user.token = token;
-  saveUsers(storedUsers);
-
-  const { passwordHash: _h, salt: _s, password: _p, ...safeUser } = user;
-  return res.json({
-    success: true,
-    user: safeUser,
-    token,
-    message: 'Authentication successful.'
+app.post('/api/auth/login', (_req: Request, res: Response) => {
+  return res.status(403).json({
+    success: false,
+    error: 'Manual email/password login is disabled. Please use Sign in with Google.'
   });
 });
 
@@ -1062,222 +1193,401 @@ app.post('/api/auth/reset-password', (req: Request, res: Response) => {
   });
 });
 
-app.get('/api/auth/me', (req: Request, res: Response) => {
-  const authHeader = req.headers.authorization;
-  const token = authHeader && authHeader.startsWith('Bearer ')
-    ? authHeader.slice(7)
-    : (req.query.token as string);
-
-  if (!token) {
-    return res.status(401).json({ success: false, error: 'Authorization token required' });
-  }
-
-  const user = storedUsers.find(u => u.token === token);
-  if (!user) {
-    return res.status(401).json({ success: false, error: 'Session expired or invalid' });
-  }
-
+app.get('/api/auth/me', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const user = req.authUser!;
   const { passwordHash: _h, salt: _s, password: _p, ...safeUser } = user;
   return res.json({ success: true, user: safeUser });
 });
 
-app.get('/api/auth/users', (_req: Request, res: Response) => {
-  const safeList = storedUsers.map(({ passwordHash: _h, salt: _s, password: _p, ...u }) => u);
+app.post('/api/auth/logout', (req: Request, res: Response) => {
+  const token = extractSessionToken(req);
+  if (token) {
+    const user = storedUsers.find(u => u.token && u.token === token);
+    if (user) {
+      user.token = undefined;
+      saveUsers(storedUsers);
+    }
+  }
+
+  // Strict anti-cache & browser storage clearing headers
+  setNoCacheHeaders(res);
+  res.setHeader('Clear-Site-Data', '"cache", "storage"');
+
+  return res.json({
+    success: true,
+    loggedOut: true,
+    redirectTo: '/login',
+    message: 'Session destroyed and browser cache cleared.'
+  });
+});
+
+app.get('/api/auth/users', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  if (req.authUser!.role !== 'admin') {
+    return res.status(403).json({ success: false, error: 'Admin access required' });
+  }
+  const safeList = storedUsers.map(({ passwordHash: _h, salt: _s, password: _p, token: _t, ...u }) => u);
   return res.json({ success: true, users: safeList });
 });
 
-app.post('/api/auth/deposit', (req: Request, res: Response) => {
-  const { userId, amount } = req.body;
-  const numAmount = parseFloat(amount);
-  if (!userId || !numAmount || numAmount <= 0) {
-    return res.status(400).json({ success: false, error: 'Valid userId and positive amount required' });
-  }
-
-  const user = storedUsers.find(u => u.id === userId);
-  if (!user) {
-    return res.status(404).json({ success: false, error: 'User not found' });
-  }
-
-  user.balance += numAmount;
-  saveUsers(storedUsers);
-
-  const { password: _, ...safeUser } = user;
-  return res.json({ success: true, user: safeUser, message: `₹${numAmount.toFixed(2)} added to user wallet` });
-});
-
-// 6.c All Payment Methods & Deposits API
-
-// Configured Payment Methods
+// 6.c Payment Gateway API (Razorpay Only)
 app.get('/api/payment-methods', (_req: Request, res: Response) => {
   res.json({
     success: true,
     methods: [
       {
-        id: 'paytm_qr',
-        name: 'Paytm UPI QR (Automatic Verification)',
-        category: 'upi',
-        tag: 'Recommended · 3% Bonus',
-        vpa: 'bobeegautam1@ptaxis',
-        accountName: 'Bobee Gautam (Paytm Payments Bank / Axis Bank UPI)',
-        qrImageUrl: '/assets/aistudio/IMG_20261110_004130_12c35e0e.jpg',
+        id: 'razorpay',
+        name: 'Razorpay Payment Gateway (Instant Auto)',
+        category: 'razorpay',
+        tag: 'Instant Auto',
         minAmount: 10,
-        maxAmount: 100000,
-        feePercent: 0,
-        bonusPercent: 3,
-        bonusMinAmount: 1000,
-        description: 'Scan Paytm QR with any UPI app (Paytm, PhonePe, GPay, BHIM) and enter 12-digit UTR.'
-      },
-      {
-        id: 'phonepe',
-        name: 'PhonePe Direct UPI',
-        category: 'upi',
-        tag: 'Fast & Secure',
-        vpa: 'bobeegautam1@ptaxis',
-        minAmount: 10,
-        maxAmount: 100000,
-        feePercent: 0,
-        bonusPercent: 3,
-        bonusMinAmount: 1000,
-        description: 'Pay directly via PhonePe UPI intent or manual transfer to bobeegautam1@ptaxis.'
-      },
-      {
-        id: 'gpay',
-        name: 'Google Pay (GPay)',
-        category: 'upi',
-        tag: 'Zero Fee',
-        vpa: 'bobeegautam1@ptaxis',
-        minAmount: 10,
-        maxAmount: 100000,
-        feePercent: 0,
-        bonusPercent: 3,
-        bonusMinAmount: 1000,
-        description: 'Transfer via Google Pay to UPI ID bobeegautam1@ptaxis and submit reference number.'
-      },
-      {
-        id: 'card',
-        name: 'Debit & Credit Cards',
-        category: 'cards',
-        tag: 'RuPay / Visa / Master',
-        minAmount: 100,
-        maxAmount: 50000,
+        maxAmount: 10000,
         feePercent: 0,
         bonusPercent: 0,
-        description: 'Instant deposit using Indian & International Debit/Credit cards.'
-      },
-      {
-        id: 'netbanking',
-        name: 'Net Banking (All Indian Banks)',
-        category: 'netbanking',
-        tag: '50+ Banks',
-        minAmount: 100,
-        maxAmount: 200000,
-        feePercent: 0,
-        bonusPercent: 0,
-        description: 'SBI, HDFC Bank, ICICI Bank, Axis Bank, PNB, Kotak, Bank of Baroda, etc.'
-      },
-      {
-        id: 'crypto',
-        name: 'Crypto (USDT TRC20 / BEP20)',
-        category: 'crypto',
-        tag: '5% Extra Bonus',
-        cryptoAddress: 'TXn89JkL44vPwQtR12yUm79qZsA67c4E29',
-        network: 'USDT TRC20 / BEP20',
-        minAmount: 500,
-        maxAmount: 500000,
-        ratePerUsdt: 89.50,
-        feePercent: 0,
-        bonusPercent: 5,
-        bonusMinAmount: 500,
-        description: 'Global deposits in USDT TRC20 or BEP20. Automatic 5% extra balance bonus!'
+        description: 'Pay securely via Razorpay using UPI, Debit/Credit Cards, NetBanking, or Wallets.'
       }
     ]
   });
 });
 
-// Deposits list
-app.get('/api/deposits', (req: Request, res: Response) => {
-  const { userId } = req.query;
-  if (userId) {
-    const user = storedUsers.find(u => u.id === String(userId));
-    if (user && user.role !== 'admin') {
-      const userDeposits = storedDeposits.filter(d => d.userId === userId);
-      return res.json({ success: true, deposits: userDeposits });
-    }
-  }
-  return res.json({ success: true, deposits: storedDeposits });
+// Deposits list (Strictly scoped to logged-in user)
+app.get('/api/deposits', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const loggedInUser = req.authUser!;
+  const userDeposits = storedDeposits.filter(d => d.userId === loggedInUser.id);
+  return res.json({ success: true, deposits: userDeposits });
 });
 
-// Submit payment & verify deposit
-app.post('/api/deposit/submit', (req: Request, res: Response) => {
-  const { userId, amount, method, utrNumber, note } = req.body;
-  const numAmount = parseFloat(amount);
+// ==========================================
+// 6.c.1 Razorpay Payment Gateway Endpoints
+// ==========================================
 
-  if (!numAmount || numAmount <= 0) {
-    return res.status(400).json({ success: false, error: 'Please enter a valid deposit amount.' });
-  }
+const MIN_DEPOSIT = 10;
+const MAX_DEPOSIT = 10000;
 
-  // Require logged-in user account
-  const targetUser = userId ? storedUsers.find(u => u.id === userId) : null;
-  if (!targetUser) {
-    return res.status(401).json({
+// Create Razorpay Order (supports /api/wallet/create-order, /api/razorpay/create-order, and /api/payment/create-order)
+const handleCreateRazorpayOrder = async (req: AuthenticatedRequest, res: Response) => {
+  const { amount } = req.body;
+  const numAmount = Number(amount);
+  const targetUser = req.authUser!;
+
+  if (Number.isNaN(numAmount) || numAmount < MIN_DEPOSIT || numAmount > MAX_DEPOSIT) {
+    return res.status(400).json({
       success: false,
-      error: 'Authentication required. Please log in to your account before adding payment.'
+      error: `Invalid deposit amount. Must be between ₹${MIN_DEPOSIT} and ₹${MAX_DEPOSIT}.`,
+      message: `Invalid deposit amount. Must be between ₹${MIN_DEPOSIT} and ₹${MAX_DEPOSIT}.`
     });
   }
 
-  // Calculate Bonus
-  let bonus = 0;
-  if ((method === 'paytm_qr' || method === 'phonepe' || method === 'gpay') && numAmount >= 1000) {
-    bonus = Math.round(numAmount * (numAmount >= 5000 ? 0.05 : 0.03));
-  } else if (method === 'crypto' && numAmount >= 500) {
-    bonus = Math.round(numAmount * 0.05);
+  const activeKeyId = process.env.RAZORPAY_KEY_ID || RAZORPAY_KEY_ID;
+  const activeKeySecret = process.env.RAZORPAY_KEY_SECRET || RAZORPAY_KEY_SECRET;
+
+  if (!activeKeyId || !activeKeySecret) {
+    return res.status(503).json({
+      success: false,
+      error: 'Razorpay payment gateway is not yet configured on the server. Please configure RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in the server environment.',
+      message: 'Razorpay payment gateway is not yet configured on the server.'
+    });
   }
 
-  const totalCredited = numAmount + bonus;
+  const amountInPaise = Math.round(numAmount * 100);
+  const receipt = `boby_rcpt_${targetUser.id.replace(/[^a-zA-Z0-9]/g, '').slice(-8)}_${Date.now().toString().slice(-6)}`;
 
-  // Method Titles
-  const methodTitles: Record<string, string> = {
-    paytm_qr: 'Paytm UPI QR (bobeegautam1@ptaxis)',
-    phonepe: 'PhonePe Direct UPI',
-    gpay: 'Google Pay UPI',
-    card: 'Debit / Credit Card',
-    netbanking: 'Net Banking',
-    crypto: 'USDT Crypto (TRC20)'
-  };
+  try {
+    const rzp = razorpayInstance || new Razorpay({
+      key_id: activeKeyId,
+      key_secret: activeKeySecret
+    });
 
-  const cleanUtr = utrNumber ? String(utrNumber).trim() : `UTR${Date.now().toString().slice(-8)}`;
+    const order = await rzp.orders.create({
+      amount: amountInPaise,
+      currency: 'INR',
+      receipt: receipt,
+      notes: {
+        userId: targetUser.id,
+        userEmail: targetUser.email,
+        username: targetUser.username
+      }
+    });
 
-  // Create Deposit Record
-  const newDeposit: DepositRecord = {
-    id: `dep-${Date.now()}`,
-    depositId: `DEP-${Math.floor(100000 + Math.random() * 900000)}`,
-    userId: targetUser ? targetUser.id : 'usr-anon',
-    userEmail: targetUser ? targetUser.email : 'guest@smm.in',
-    amount: numAmount,
-    bonus,
-    totalCredited,
-    method: method || 'paytm_qr',
-    methodTitle: methodTitles[method] || 'Paytm UPI QR',
-    utrNumber: cleanUtr,
-    status: 'Completed',
-    createdAt: new Date().toISOString()
-  };
+    // Record pending transaction record in deposits ledger
+    const pendingDeposit: DepositRecord = {
+      id: `dep-${Date.now()}`,
+      depositId: `RZP-${Date.now().toString().slice(-6)}`,
+      userId: targetUser.id,
+      userEmail: targetUser.email,
+      amount: numAmount,
+      bonus: 0,
+      totalCredited: numAmount,
+      method: 'razorpay',
+      methodTitle: 'Razorpay Gateway (UPI/Card/NetBanking)',
+      razorpayOrderId: order.id,
+      status: 'Pending',
+      createdAt: new Date().toISOString()
+    };
 
-  storedDeposits.unshift(newDeposit);
+    storedDeposits.unshift(pendingDeposit);
+    saveDeposits(storedDeposits);
+
+    dbCreateTransaction({
+      id: pendingDeposit.id,
+      user_id: targetUser.id,
+      order_id: order.id,
+      amount: numAmount,
+      bonus: 0,
+      totalCredited: numAmount,
+      status: 'pending',
+      gateway: 'razorpay',
+      method: 'razorpay',
+      methodTitle: pendingDeposit.methodTitle,
+      created_at: pendingDeposit.createdAt
+    }, userFirebaseTokens.get(targetUser.id)).catch(e => console.error('[DB] Failed saving pending transaction:', e));
+
+    return res.json({
+      success: true,
+      order,
+      order_id: order.id,
+      amount: order.amount,
+      currency: order.currency,
+      key_id: activeKeyId,
+      user: {
+        name: targetUser.name,
+        email: targetUser.email,
+        phone: targetUser.phone || ''
+      }
+    });
+  } catch (err: any) {
+    console.error('Error creating Razorpay order:', err);
+    return res.status(500).json({
+      success: false,
+      error: err?.message || 'Failed to create Razorpay order.'
+    });
+  }
+};
+
+app.post('/api/wallet/create-order', requireAuth, handleCreateRazorpayOrder);
+app.post('/api/razorpay/create-order', requireAuth, handleCreateRazorpayOrder);
+app.post('/api/payment/create-order', requireAuth, handleCreateRazorpayOrder);
+
+// Verify Razorpay Payment Signature and Credit Wallet Balance (supports both /api/razorpay/verify-payment and /api/payment/verify)
+const handleVerifyRazorpayPayment = async (req: AuthenticatedRequest, res: Response) => {
+  const { razorpay_order_id, razorpay_payment_id, razorpay_signature, amount } = req.body;
+  const targetUser = req.authUser!;
+
+  if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing required Razorpay verification credentials.',
+      message: 'Invalid payment parameters.'
+    });
+  }
+
+  const activeKeySecret = process.env.RAZORPAY_KEY_SECRET || RAZORPAY_KEY_SECRET;
+
+  if (!activeKeySecret) {
+    return res.status(500).json({
+      success: false,
+      error: 'Server configuration error: RAZORPAY_KEY_SECRET not set.'
+    });
+  }
+
+  // 1. Verify HMAC SHA256 Signature
+  const body = razorpay_order_id + '|' + razorpay_payment_id;
+  const expectedSignature = crypto
+    .createHmac('sha256', activeKeySecret)
+    .update(body.toString())
+    .digest('hex');
+
+  const expectedBuf = Buffer.from(expectedSignature);
+  const sigBuf = Buffer.from(String(razorpay_signature));
+  const isSignatureValid = expectedBuf.length === sigBuf.length && crypto.timingSafeEqual(expectedBuf, sigBuf);
+
+  if (!isSignatureValid) {
+    console.warn(`[Razorpay Security Alert] Invalid signature for payment ${razorpay_payment_id} on order ${razorpay_order_id}`);
+    
+    // Mark pending deposit as failed if found
+    const failedRecord = storedDeposits.find(d => d.razorpayOrderId === razorpay_order_id);
+    if (failedRecord) {
+      failedRecord.status = 'Failed';
+      saveDeposits(storedDeposits);
+      dbUpdateTransaction(razorpay_order_id, { status: 'failed' }, userFirebaseTokens.get(targetUser.id)).catch(() => {});
+    }
+
+    return res.status(400).json({
+      success: false,
+      error: 'Payment signature verification failed.',
+      message: 'Payment signature verification failed.'
+    });
+  }
+
+  // 2. Prevent Duplicate Credit Attack: Check if payment_id has already been credited
+  const alreadyProcessed = storedDeposits.find(
+    d => d.razorpayPaymentId === razorpay_payment_id && (d.status === 'Completed' || d.status === 'Success')
+  );
+
+  if (alreadyProcessed) {
+    return res.json({
+      success: true,
+      alreadyProcessed: true,
+      newBalance: targetUser.balance,
+      message: 'Payment already credited to wallet.'
+    });
+  }
+
+  // 3. Determine amount and bonus & validate ownership
+  let depositAmount = parseFloat(amount || '0');
+  let depositRecord = storedDeposits.find(d => d.razorpayOrderId === razorpay_order_id);
+
+  if (depositRecord && depositRecord.userId && depositRecord.userId !== targetUser.id) {
+    return res.status(403).json({
+      success: false,
+      error: 'Unauthorized transaction access.',
+      message: 'Unauthorized transaction access.'
+    });
+  }
+
+  if (depositRecord && depositRecord.amount > 0) {
+    depositAmount = depositRecord.amount;
+  }
+
+  if (!depositAmount || depositAmount <= 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'Invalid deposit amount for verified payment.'
+    });
+  }
+
+  const bonus = 0;
+  const totalCredited = Number(depositAmount.toFixed(2));
+
+  // 4. Update or create deposit record as Success/Completed
+  if (depositRecord) {
+    depositRecord.status = 'Success';
+    depositRecord.amount = depositAmount;
+    depositRecord.bonus = bonus;
+    depositRecord.totalCredited = totalCredited;
+    depositRecord.razorpayPaymentId = razorpay_payment_id;
+    depositRecord.utrNumber = razorpay_payment_id;
+  } else {
+    depositRecord = {
+      id: `dep-${Date.now()}`,
+      depositId: `RZP-${Date.now().toString().slice(-6)}`,
+      userId: targetUser.id,
+      userEmail: targetUser.email,
+      amount: depositAmount,
+      bonus,
+      totalCredited,
+      method: 'razorpay',
+      methodTitle: 'Razorpay Gateway (UPI/Card/NetBanking)',
+      razorpayOrderId: razorpay_order_id,
+      razorpayPaymentId: razorpay_payment_id,
+      utrNumber: razorpay_payment_id,
+      status: 'Success',
+      createdAt: new Date().toISOString()
+    };
+    storedDeposits.unshift(depositRecord);
+  }
   saveDeposits(storedDeposits);
 
-  if (targetUser) {
-    targetUser.balance += totalCredited;
-    saveUsers(storedUsers);
+  // 5. Securely credit wallet balance to logged-in user
+  targetUser.balance = Number((targetUser.balance + totalCredited).toFixed(2));
+
+  // 6. Handle referral commission if user was referred
+  if (targetUser.referredBy) {
+    const referrer = storedUsers.find(u => u.id === targetUser.referredBy);
+    if (referrer) {
+      const commission = Number((depositAmount * 0.05).toFixed(2));
+      referrer.balance = Number((referrer.balance + commission).toFixed(2));
+      referrer.referralEarnings = Number(((referrer.referralEarnings || 0) + commission).toFixed(2));
+    }
   }
+
+  saveUsers(storedUsers);
+
+  const fbToken = userFirebaseTokens.get(targetUser.id);
+
+  // Sync transaction status to database
+  dbUpdateTransaction(razorpay_order_id, {
+    payment_id: razorpay_payment_id,
+    status: 'success',
+    bonus,
+    totalCredited
+  }, fbToken).catch(e => console.error('[DB] Failed updating transaction in database:', e));
+
+  // Sync credited wallet balance to database
+  dbSaveUser({
+    id: targetUser.id,
+    google_id: targetUser.googleUid,
+    email: targetUser.email,
+    wallet_balance: targetUser.balance,
+    role: targetUser.role === 'admin' ? 'admin' : 'user',
+    username: targetUser.username,
+    name: targetUser.name,
+    photoUrl: targetUser.photoUrl,
+    token: targetUser.token,
+    referralCode: targetUser.referralCode,
+    referredBy: targetUser.referredBy,
+    referralEarnings: targetUser.referralEarnings,
+    created_at: targetUser.createdAt
+  }, fbToken).catch(e => console.error('[DB] Failed syncing credited wallet balance to database:', e));
+
+  console.log(`[Razorpay Success] ₹${totalCredited} credited to user ${targetUser.email} (Payment ID: ${razorpay_payment_id})`);
 
   return res.json({
     success: true,
-    deposit: newDeposit,
-    newBalance: targetUser ? targetUser.balance : undefined,
+    verified: true,
+    paymentId: razorpay_payment_id,
+    orderId: razorpay_order_id,
+    amount: depositAmount,
     bonus,
     totalCredited,
-    message: `Payment verified! ₹${totalCredited.toFixed(2)} (${bonus > 0 ? `₹${numAmount} + ₹${bonus} bonus` : `₹${numAmount}`}) credited to wallet.`
+    newBalance: targetUser.balance,
+    message: `Successfully credited ₹${totalCredited.toFixed(2)} to your wallet.`
+  });
+};
+
+app.post('/api/wallet/verify-payment', requireAuth, handleVerifyRazorpayPayment);
+app.post('/api/razorpay/verify-payment', requireAuth, handleVerifyRazorpayPayment);
+app.post('/api/payment/verify', requireAuth, handleVerifyRazorpayPayment);
+
+// Project Zip Download Endpoint
+app.get('/api/download-zip', (_req: Request, res: Response) => {
+  const zipPath = path.resolve(process.cwd(), 'public', 'boby-smm-panel.zip');
+  if (!fs.existsSync(zipPath)) {
+    return res.status(404).json({ success: false, error: 'Project zip archive not found.' });
+  }
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', 'attachment; filename="boby-smm-panel.zip"');
+  return res.sendFile(zipPath);
+});
+
+// 6.d Referral / Invite Stats & Tracking API
+app.get('/api/referrals', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const loggedInUser = req.authUser!;
+  if (!loggedInUser.referralCode) {
+    loggedInUser.referralCode = `BOBY${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+    saveUsers(storedUsers);
+  }
+
+  const referredUsers = storedUsers.filter(u => u.referredBy === loggedInUser.id);
+  const referrals = referredUsers.map(refUser => {
+    const userDeposits = storedDeposits.filter(d => d.userId === refUser.id);
+    const totalDeposited = userDeposits.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
+    const commissionEarned = Number((totalDeposited * 0.05).toFixed(2));
+    return {
+      id: refUser.id,
+      name: refUser.name,
+      maskedEmail: maskEmail(refUser.email),
+      joinedAt: refUser.createdAt,
+      totalDeposited,
+      commissionEarned
+    };
+  });
+
+  return res.json({
+    success: true,
+    referralCode: loggedInUser.referralCode,
+    referralEarnings: loggedInUser.referralEarnings || 0,
+    totalReferrals: referrals.length,
+    referrals
   });
 });
 
