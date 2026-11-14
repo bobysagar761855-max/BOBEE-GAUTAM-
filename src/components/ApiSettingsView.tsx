@@ -7,7 +7,7 @@ interface ApiSettingsViewProps {
 }
 
 export const ApiSettingsView: React.FC<ApiSettingsViewProps> = ({ onShowToast, onRefreshBalance }) => {
-  const [apiKey, setApiKey] = useState('2058d47f3d4169e18b08bfbd5bcdaba83eae0da6');
+  const [apiKey, setApiKey] = useState('');
   const [showKey, setShowKey] = useState(false);
   const [copiedKey, setCopiedKey] = useState(false);
   const [copiedCurl, setCopiedCurl] = useState(false);

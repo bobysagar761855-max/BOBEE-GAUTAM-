@@ -1,0 +1,10 @@
+[build]
+  command = "bun run build"
+  publish = "dist"
+
+[build.environment]
+  # The Firebase web config (apiKey etc.) in firebase-applet-config.json is a
+  # public client identifier by design and is bundled into the frontend.
+  # Disable pattern-based "smart" detection so it isn't flagged; scanning for
+  # the values of environment variables set in Netlify stays enabled.
+  SECRETS_SCAN_SMART_DETECTION_ENABLED = "false"

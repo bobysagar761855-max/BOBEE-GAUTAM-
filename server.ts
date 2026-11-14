@@ -53,7 +53,7 @@ app.use('/api', (_req: Request, res: Response, next: NextFunction) => {
 
 // Hanuman SMM Provider Configuration
 let HANUMAN_API_URL = process.env.HANUMAN_API_URL || 'https://hanumansmm.in/api/v2';
-let HANUMAN_API_KEY = process.env.HANUMAN_API_KEY || '2058d47f3d4169e18b08bfbd5bcdaba83eae0da6';
+let HANUMAN_API_KEY = process.env.HANUMAN_API_KEY || '';
 
 // Firebase OAuth Config for Google ID Token Verification
 let FIREBASE_API_KEY = '';
