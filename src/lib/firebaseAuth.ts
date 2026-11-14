@@ -9,7 +9,14 @@ import {
 } from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
-
+const firebaseConfig = {
+  apiKey: "AIzaSyD0BFFsGgbFA0HyUtRe46-ZkndNNsvX9Eg",
+  authDomain: "gen-lang-client-0850826931.firebaseapp.com",
+  projectId: "gen-lang-client-0850826931",
+  storageBucket: "gen-lang-client-0850826931.firebasestorage.app",
+  messagingSenderId: "637558125973",
+  appId: "1:637558125973:web:fb0f28e0a48ac25ee1729c"
+};
 export const SCOPES = [
   'https://www.googleapis.com/auth/userinfo.email',
   'https://www.googleapis.com/auth/userinfo.profile',
