@@ -489,7 +489,8 @@ async function callHanumanAPI(payload: Record<string, string | number>, timeoutM
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-  try {
+  try { यहाँ कोड है: try { if (!HANUMAN_API_URL.startsWith('https://')) throw new Error('Invalid URL'); const response = await fetch(HANUMAN_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'Mozilla/5.0' }, body: params.toString(), signal: controller.signal });
+                        
     const response = await fetch(HANUMAN_API_URL, {
       method: 'POST',
       headers: {
@@ -497,7 +498,7 @@ async function callHanumanAPI(payload: Record<string, string | number>, timeoutM
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
       },
       body: params.toString(),
-      signal: controller.signal
+      signal: controller.signal clearTimeout(timeoutId);
     });
 
     clearTimeout(timeoutId);
